@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install locked environment
+        run: |
+          python -m pip install "uv==0.11.31"
+          uv sync --frozen --python 3.12 --extra dev
+      - name: Verify Python version
+        run: uv run --frozen python -c "import sys; assert sys.version_info[:2] == (3, 12), sys.version"
+      - name: Lint
+        run: |
+          uv run --frozen ruff check .
+          uv run --frozen ruff format --check .
+      - name: Test
+        run: uv run --frozen pytest
+
+  package:
+    runs-on: windows-latest
+    needs: test
+    env:
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install locked environment
+        run: |
+          python -m pip install "uv==0.11.31"
+          uv sync --frozen --python 3.12 --extra dev
+      - name: Verify camera SDK is optional
+        run: uv run --frozen python -c "import importlib.util; assert importlib.util.find_spec('pypylon') is None"
+      - name: Verify private source documents are not tracked
+        shell: pwsh
+        run: >
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File packaging/verify_public_sources.ps1
+      - name: Build portable application
+        run: uv run --frozen pyinstaller --noconfirm packaging/scheimpflug_optimeter.spec
+      - name: Smoke portable application
+        shell: pwsh
+        run: >
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File packaging/smoke_portable.ps1
+      - name: Assemble portable archive
+        shell: pwsh
+        run: >
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File packaging/assemble_portable.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Scheimpflug-OptiMeter-windows-x64
+          path: |
+            Scheimpflug-OptiMeter-windows-x64.zip
+            Scheimpflug-OptiMeter-windows-x64.zip.sha256
+          if-no-files-found: error

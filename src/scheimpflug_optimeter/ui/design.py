@@ -1,0 +1,868 @@
+"""Design-tab controls and direct adapter to the pure optical core."""
+
+from __future__ import annotations
+
+import math
+import threading
+from collections.abc import Mapping
+from dataclasses import asdict, is_dataclass
+from typing import Any
+
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .scene import OpticsGraphicsScene, OpticsGraphicsView, Point2D, SceneSnapshot
+
+
+class CoreUnavailableError(RuntimeError):
+    """Raised when the optical core is not importable yet."""
+
+
+def _point(value: Any) -> Point2D:
+    return Point2D(float(value.x_mm), float(value.z_mm))
+
+
+class OpticalCoreFacade:
+    """Thin adapter: the UI never repeats or substitutes an optical equation."""
+
+    def __init__(self) -> None:
+        self.import_error: Exception | None = None
+        try:
+            from scheimpflug_optimeter import hardware, models, optics
+
+            self.hardware = hardware
+            self.models = models
+            self.optics = optics
+        except (ImportError, AttributeError) as exc:
+            self.import_error = exc
+            self.hardware = None
+            self.models = None
+            self.optics = None
+
+    @property
+    def ready(self) -> bool:
+        return self.import_error is None
+
+    def cameras(self) -> tuple[Any, ...]:
+        if not self.ready:
+            return ()
+        catalog = getattr(self.hardware, "CAMERAS", ())
+        return tuple(catalog.values()) if isinstance(catalog, Mapping) else tuple(catalog)
+
+    def lenses(self) -> tuple[Any, ...]:
+        if not self.ready:
+            return ()
+        catalog = getattr(self.hardware, "LENSES", ())
+        return tuple(catalog.values()) if isinstance(catalog, Mapping) else tuple(catalog)
+
+    def camera_sensor_length_mm(self, camera_id: str, sensor_axis: str) -> float:
+        """Return a catalog length only when the user explicitly requests it."""
+
+        if not self.ready:
+            raise CoreUnavailableError("하드웨어 카탈로그를 사용할 수 없습니다.")
+        return float(self.hardware.get_camera(camera_id).sensor.length_mm(sensor_axis))
+
+    def solve(self, values: Mapping[str, Any]) -> tuple[Any, Any, SceneSnapshot]:
+        if not self.ready:
+            raise CoreUnavailableError(f"광학 코어를 불러오지 못했습니다: {self.import_error}")
+        camera = self.hardware.get_camera(values["camera_id"])
+        sensor = camera.sensor
+        mode = values["mode"]
+        if mode == "workbook":
+            request = self.models.WorkbookDesignInput(
+                v_mm=float(values["v_mm"]),
+                d_mm=float(values["d_mm"]),
+                sensor_length_mm=float(values["sensor_length_mm"]),
+                alpha_deg=float(values["alpha_deg"]),
+                sensor_id=sensor.id,
+                sensor_axis=values["sensor_axis"],
+            )
+            solution = self.optics.solve_workbook_design(request)
+            lens = None
+        else:
+            lens = self.hardware.get_lens(values["lens_id"])
+            request = self.models.DesignInput(
+                d_mm=float(values["d_mm"]),
+                range_mm=float(values["range_mm"]),
+                alpha_deg=float(values["alpha_deg"]),
+                beta_deg=float(values["beta_deg"]),
+                lens_id=lens.id,
+                sensor_id=sensor.id,
+                sensor_axis=values["sensor_axis"],
+                max_width_mm=float(values["max_width_mm"]),
+                max_rear_mm=float(values["max_rear_mm"]),
+                laser_wavelength_nm=float(values["wavelength_nm"]),
+            )
+            solution = self.optics.solve_canonical_design(
+                request,
+                lens=lens,
+                sensor=sensor,
+            )
+        geometry = self.optics.build_scene_geometry(solution)
+        return solution, lens, self.scene_snapshot(solution, geometry)
+
+    @staticmethod
+    def scene_snapshot(solution: Any, geometry: Any) -> SceneSnapshot:
+        request = solution.request
+        range_mm = getattr(request, "range_mm", None)
+        if range_mm is None:
+            range_mm = abs(solution.ray_intercept_s_mm or 0.0)
+        working_distance_endpoints = (
+            (
+                _point(geometry.target_center),
+                Point2D(
+                    geometry.target_center.x_mm,
+                    float(geometry.front_plane_z_mm),
+                ),
+            )
+            if geometry.front_plane_z_mm is not None
+            else (_point(geometry.emitter), _point(geometry.target_center))
+        )
+        range_endpoints = (
+            (_point(geometry.target_center), _point(geometry.ray_intercept))
+            if geometry.ray_intercept is not None
+            else tuple(_point(value) for value in geometry.object_range)
+        )
+        warnings = tuple(solution.warnings) + tuple(
+            violation.message for violation in solution.violations
+        )
+        return SceneSnapshot(
+            emitter=_point(geometry.emitter),
+            laser_endpoints=tuple(_point(value) for value in geometry.laser_line),
+            target_near=_point(geometry.target_near),
+            target_nominal=_point(geometry.target_center),
+            target_far=_point(geometry.target_far),
+            working_distance_endpoints=working_distance_endpoints,
+            range_endpoints=range_endpoints,
+            lens_center=_point(geometry.lens_center),
+            lens_endpoints=tuple(_point(value) for value in geometry.lens_plane),
+            image_center=_point(geometry.image_center),
+            sensor_endpoints=(
+                _point(geometry.sensor_near),
+                _point(geometry.sensor_far),
+            ),
+            proxy_sensor_endpoints=(
+                _point(geometry.sensor_proxy_near),
+                _point(geometry.sensor_proxy_far),
+            ),
+            optical_axis_endpoints=tuple(_point(value) for value in geometry.optical_axis),
+            chief_rays=(
+                (
+                    _point(geometry.target_near),
+                    _point(geometry.lens_center),
+                    _point(geometry.sensor_near),
+                ),
+                (
+                    _point(geometry.target_far),
+                    _point(geometry.lens_center),
+                    _point(geometry.sensor_far),
+                ),
+            ),
+            scheimpflug_point=(
+                _point(geometry.scheimpflug_intersection)
+                if geometry.scheimpflug_intersection is not None
+                else None
+            ),
+            working_distance_mm=float(request.d_mm),
+            measurement_range_mm=float(range_mm),
+            w_mm=float(solution.width_exact_mm),
+            r_mm=float(solution.rear_exact_mm),
+            lo_mm=float(solution.lo_mm),
+            fp_mm=float(solution.fp_mm),
+            focal_length_mm=float(solution.focal_length_mm),
+            valid=bool(solution.valid),
+            warnings=warnings,
+            range_label=(
+                "레이저 교차 거리 s" if solution.mode.value == "workbook" else "측정 범위 S"
+            ),
+            target_nominal_label=(
+                "워크북 기준면" if solution.mode.value == "workbook" else "기준거리"
+            ),
+            workbook_mode=solution.mode.value == "workbook",
+        )
+
+    def compatibility(self, camera_id: str, lens_id: str, solution: Any | None):
+        if not self.ready:
+            return None
+        design = getattr(solution, "request", solution)
+        return self.hardware.evaluate_compatibility(
+            self.hardware.get_camera(camera_id),
+            self.hardware.get_lens(lens_id),
+            design=design,
+        )
+
+    def optimization_request(self, values: Mapping[str, Any], algorithm: str):
+        if not self.ready:
+            raise CoreUnavailableError("광학 코어를 사용할 수 없습니다.")
+        camera = self.hardware.get_camera(values["camera_id"])
+        lens_ids = tuple(lens.id for lens in self.lenses())
+        return self.models.OptimizationRequest(
+            d_mm=float(values["d_mm"]),
+            range_mm=float(values["range_mm"]),
+            sensor_id=camera.sensor.id,
+            sensor_axis=values["sensor_axis"],
+            lens_ids=lens_ids,
+            algorithm=algorithm,
+            max_width_mm=float(values["max_width_mm"]),
+            max_rear_mm=float(values["max_rear_mm"]),
+        )
+
+
+class DesignInputPanel(QWidget):
+    """Korean-first authoritative design inputs."""
+
+    changed = Signal()
+
+    def __init__(self, facade: OpticalCoreFacade, parent=None) -> None:
+        super().__init__(parent)
+        self._facade = facade
+        layout = QVBoxLayout(self)
+        title = QLabel("워크북/CSV 계산 입력")
+        title.setObjectName("panelTitle")
+        layout.addWidget(title)
+        self.mode_help = QLabel()
+        self.mode_help.setWordWrap(True)
+        self.mode_help.setStyleSheet(
+            "background:#eaf4ff;border:1px solid #a9cdec;"
+            "border-radius:4px;padding:7px;color:#174a72;"
+        )
+        layout.addWidget(self.mode_help)
+        form = QFormLayout()
+        self.form = form
+
+        self.mode = QComboBox()
+        self.mode.addItem("워크북 호환 계산 (기본)", "workbook")
+        self.mode.addItem("고급/연구 참고 · Canonical 설계", "canonical")
+        self.camera = QComboBox()
+        self.lens = QComboBox()
+        for combo in (self.camera, self.lens):
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(14)
+        self.sensor_axis = QComboBox()
+        self.sensor_axis.addItem("센서 높이 (vertical)", "height")
+        self.sensor_axis.addItem("센서 폭 (horizontal)", "width")
+
+        self.d_mm = self._spin(0.0, 100_000.0, 100.0, " mm")
+        self.range_mm = self._spin(0.001, 100_000.0, 5.0, " mm")
+        self.v_mm = self._spin(1.0, 100_000.0, 205.0, " mm")
+        self.sensor_length_mm = self._spin(
+            0.000001,
+            100_000.0,
+            5.4378,
+            " mm",
+            decimals=6,
+        )
+        self.load_sensor_length_button = QPushButton("카메라 축 길이 불러오기")
+        self.sensor_length_container = QWidget()
+        sensor_length_layout = QHBoxLayout(self.sensor_length_container)
+        sensor_length_layout.setContentsMargins(0, 0, 0, 0)
+        sensor_length_layout.addWidget(self.sensor_length_mm, 1)
+        sensor_length_layout.addWidget(self.load_sensor_length_button)
+        self.alpha_deg = self._spin(0.01, 89.0, 14.27, "°", decimals=4)
+        self.beta_deg = self._spin(0.01, 89.0, 30.0, "°", decimals=4)
+        self.max_width_mm = self._spin(1.0, 10_000.0, 105.0, " mm")
+        self.max_rear_mm = self._spin(1.0, 10_000.0, 105.0, " mm")
+        self.wavelength_nm = self._spin(200.0, 2_000.0, 650.0, " nm", decimals=1)
+
+        form.addRow("계산 모드", self.mode)
+        form.addRow("카메라", self.camera)
+        form.addRow("Edmund M12 렌즈", self.lens)
+        form.addRow("센서 사용 방향", self.sensor_axis)
+        form.addRow("워크북 V", self.v_mm)
+        form.addRow("워킹 디스턴스 d", self.d_mm)
+        form.addRow("센서/이미지 길이 L", self.sensor_length_container)
+        form.addRow("수광각 α", self.alpha_deg)
+        form.addRow("측정 범위 S", self.range_mm)
+        form.addRow("센서 틸트 β", self.beta_deg)
+        form.addRow("최대 폭 W", self.max_width_mm)
+        form.addRow("최대 후방 R", self.max_rear_mm)
+        form.addRow("레이저 파장", self.wavelength_nm)
+        layout.addLayout(form)
+        layout.addStretch(1)
+        self._load_catalogs()
+
+        for widget in (
+            self.mode,
+            self.camera,
+            self.lens,
+            self.sensor_axis,
+        ):
+            widget.currentIndexChanged.connect(self.changed)
+        for widget in (
+            self.d_mm,
+            self.range_mm,
+            self.v_mm,
+            self.sensor_length_mm,
+            self.alpha_deg,
+            self.beta_deg,
+            self.max_width_mm,
+            self.max_rear_mm,
+            self.wavelength_nm,
+        ):
+            widget.valueChanged.connect(self.changed)
+        self.mode.currentIndexChanged.connect(self._update_mode_visibility)
+        self.load_sensor_length_button.clicked.connect(self.load_selected_camera_sensor_length)
+        self._update_mode_visibility()
+
+    @staticmethod
+    def _spin(
+        minimum: float,
+        maximum: float,
+        value: float,
+        suffix: str,
+        *,
+        decimals: int = 3,
+    ) -> QDoubleSpinBox:
+        widget = QDoubleSpinBox()
+        widget.setRange(minimum, maximum)
+        widget.setDecimals(decimals)
+        widget.setValue(value)
+        widget.setSuffix(suffix)
+        widget.setKeyboardTracking(False)
+        return widget
+
+    def _load_catalogs(self) -> None:
+        self.camera.clear()
+        for camera in self._facade.cameras():
+            self.camera.addItem(
+                f"{camera.manufacturer} {camera.model} "
+                f"({camera.sensor.width_px}×{camera.sensor.height_px})",
+                camera.id,
+            )
+        if not self.camera.count():
+            self.camera.addItem("카메라 카탈로그 로드 실패", "")
+            self.camera.setEnabled(False)
+
+        self.lens.clear()
+        for lens in self._facade.lenses():
+            self.lens.addItem(
+                f"#{lens.sku} · {lens.focal_length_mm:g} mm · {lens.name}",
+                lens.id,
+            )
+        if not self.lens.count():
+            self.lens.addItem("렌즈 카탈로그 로드 실패", "")
+            self.lens.setEnabled(False)
+
+    def _update_mode_visibility(self) -> None:
+        workbook = self.mode.currentData() == "workbook"
+        for widget in (self.v_mm, self.sensor_length_container):
+            self.form.setRowVisible(widget, workbook)
+        for widget in (
+            self.lens,
+            self.range_mm,
+            self.beta_deg,
+            self.max_width_mm,
+            self.max_rear_mm,
+            self.wavelength_nm,
+        ):
+            self.form.setRowVisible(widget, not workbook)
+        self.lens.setEnabled(not workbook and bool(self.lens.currentData()))
+        if workbook:
+            self.mode_help.setText(
+                "기본 흐름: 구조설계_rev.1.xlsx/CSV의 V, d, L, α를 입력하면 "
+                "β, b, W, R, lo, fp, s, f와 2D 구조가 즉시 계산됩니다. "
+                "L 직접 입력값이 계산의 권위값입니다."
+            )
+        else:
+            self.mode_help.setText(
+                "고급/연구 참고 기능입니다. 논문식 canonical 설계, 렌즈 후보 "
+                "호환성 및 구조 최적화를 비교할 때 사용하세요."
+            )
+
+    @Slot()
+    def load_selected_camera_sensor_length(self) -> None:
+        try:
+            length = self._facade.camera_sensor_length_mm(
+                self.camera.currentData(),
+                self.sensor_axis.currentData(),
+            )
+        except Exception:
+            return
+        self.sensor_length_mm.setValue(length)
+
+    def values(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode.currentData(),
+            "camera_id": self.camera.currentData(),
+            "lens_id": self.lens.currentData(),
+            "sensor_axis": self.sensor_axis.currentData(),
+            "d_mm": self.d_mm.value(),
+            "range_mm": self.range_mm.value(),
+            "v_mm": self.v_mm.value(),
+            "sensor_length_mm": self.sensor_length_mm.value(),
+            "alpha_deg": self.alpha_deg.value(),
+            "beta_deg": self.beta_deg.value(),
+            "max_width_mm": self.max_width_mm.value(),
+            "max_rear_mm": self.max_rear_mm.value(),
+            "wavelength_nm": self.wavelength_nm.value(),
+        }
+
+    def apply_values(self, values: Mapping[str, Any]) -> None:
+        blockers = [
+            self.mode,
+            self.camera,
+            self.lens,
+            self.sensor_axis,
+            self.d_mm,
+            self.range_mm,
+            self.v_mm,
+            self.sensor_length_mm,
+            self.alpha_deg,
+            self.beta_deg,
+            self.max_width_mm,
+            self.max_rear_mm,
+            self.wavelength_nm,
+        ]
+        for widget in blockers:
+            widget.blockSignals(True)
+        try:
+            for combo, key in (
+                (self.mode, "mode"),
+                (self.camera, "camera_id"),
+                (self.lens, "lens_id"),
+                (self.sensor_axis, "sensor_axis"),
+            ):
+                if key in values:
+                    index = combo.findData(values[key])
+                    if index >= 0:
+                        combo.setCurrentIndex(index)
+            for spin, key in (
+                (self.d_mm, "d_mm"),
+                (self.range_mm, "range_mm"),
+                (self.v_mm, "v_mm"),
+                (self.sensor_length_mm, "sensor_length_mm"),
+                (self.alpha_deg, "alpha_deg"),
+                (self.beta_deg, "beta_deg"),
+                (self.max_width_mm, "max_width_mm"),
+                (self.max_rear_mm, "max_rear_mm"),
+                (self.wavelength_nm, "wavelength_nm"),
+            ):
+                if key in values:
+                    spin.setValue(float(values[key]))
+        finally:
+            for widget in blockers:
+                widget.blockSignals(False)
+        self._update_mode_visibility()
+        self.changed.emit()
+
+
+class ResultPanel(QWidget):
+    """Calculated values, constraints, compatibility, and optimization controls."""
+
+    optimize_requested = Signal(str)
+    cancel_requested = Signal()
+    candidate_selected = Signal(object)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        title = QLabel("계산 결과 및 제약")
+        title.setObjectName("panelTitle")
+        layout.addWidget(title)
+        self.summary = QLabel("입력을 계산하는 중…")
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
+
+        self.values = QTreeWidget()
+        self.values.setHeaderLabels(["항목", "값"])
+        self.values.setRootIsDecorated(False)
+        self.values.setMinimumWidth(315)
+        layout.addWidget(self.values, 2)
+
+        layout.addWidget(QLabel("호환성 / 경고"))
+        self.messages = QListWidget()
+        layout.addWidget(self.messages, 1)
+
+        self.optimization_group = QGroupBox("고급/연구 참고 · 구조 최적화")
+        optimization_layout = QVBoxLayout(self.optimization_group)
+        row = QHBoxLayout()
+        self.algorithm = QComboBox()
+        self.algorithm.addItem("SciPy Differential Evolution", "scipy")
+        self.algorithm.addItem("재현형 M-PSO", "mpso")
+        self.optimize_button = QPushButton("최적화 실행")
+        self.cancel_button = QPushButton("취소")
+        self.cancel_button.setEnabled(False)
+        row.addWidget(self.algorithm)
+        row.addWidget(self.optimize_button)
+        row.addWidget(self.cancel_button)
+        optimization_layout.addLayout(row)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        optimization_layout.addWidget(self.progress)
+        self.optimization_results = QListWidget()
+        optimization_layout.addWidget(self.optimization_results)
+        layout.addWidget(self.optimization_group, 1)
+        self.optimization_group.setVisible(False)
+
+        self.optimize_button.clicked.connect(
+            lambda: self.optimize_requested.emit(self.algorithm.currentData())
+        )
+        self.cancel_button.clicked.connect(self.cancel_requested)
+        self.optimization_results.itemDoubleClicked.connect(self._select_candidate)
+
+    def display_solution(self, solution: Any, compatibility: Any | None) -> None:
+        self.values.clear()
+        status = "유효" if solution.valid else "사용 불가"
+        workbook = solution.mode.value == "workbook"
+        self.optimization_group.setVisible(not workbook)
+        if workbook:
+            self.summary.setText(f"워크북 호환 계산 · {status}")
+            rows = (
+                ("워크북 V", solution.request.v_mm, "mm"),
+                ("워킹 디스턴스 d", solution.request.d_mm, "mm"),
+                ("센서/이미지 길이 L", solution.request.sensor_length_mm, "mm"),
+                ("수광각 α", solution.alpha_deg, "°"),
+                ("센서 틸트 β", solution.beta_deg, "°"),
+                ("베이스라인 b", solution.baseline_mm, "mm"),
+                ("반 센서 길이 x=L/2", solution.x_far_mm, "mm"),
+                ("외곽 W", solution.width_exact_mm, "mm"),
+                ("후방 R", solution.rear_exact_mm, "mm"),
+                ("이미지 거리 fp", solution.fp_mm, "mm"),
+                ("물체 거리 lo", solution.lo_mm, "mm"),
+                ("레이저 교차 거리 s", solution.ray_intercept_s_mm, "mm"),
+                ("유도 초점거리 f", solution.focal_length_mm, "mm"),
+                ("총 광로 lo+fp", solution.total_optical_length_mm, "mm"),
+            )
+        else:
+            self.summary.setText(f"Canonical 고급 계산 · {status}")
+            rows = (
+                ("초점거리 f", solution.focal_length_mm, "mm"),
+                ("수광각 α", solution.alpha_deg, "°"),
+                ("센서 틸트 β", solution.beta_deg, "°"),
+                ("물체 거리 lo", solution.lo_mm, "mm"),
+                ("이미지 거리 fp", solution.fp_mm, "mm"),
+                ("필요 센서 길이", solution.required_sensor_length_mm, "mm"),
+                ("사용 가능 센서", solution.sensor_length_available_mm, "mm"),
+                ("정확 외곽 W", solution.width_exact_mm, "mm"),
+                ("정확 외곽 R", solution.rear_exact_mm, "mm"),
+                ("근거리 결상 x", solution.x_near_mm, "mm"),
+                ("원거리 결상 x", solution.x_far_mm, "mm"),
+                ("거리/센서", solution.distance_per_sensor_mm, "mm/mm"),
+                ("거리/픽셀", solution.distance_per_pixel_mm, "mm/px"),
+            )
+        for name, value, unit in rows:
+            if value is None or not math.isfinite(float(value)):
+                text = "—"
+            else:
+                text = f"{float(value):.6g} {unit}"
+            self.values.addTopLevelItem(QTreeWidgetItem([name, text]))
+        self.values.resizeColumnToContents(0)
+
+        self.messages.clear()
+        for warning in solution.warnings:
+            self.messages.addItem(f"⚠ {warning}")
+        for violation in solution.violations:
+            self.messages.addItem(f"✕ {violation.message}")
+        if compatibility is not None:
+            for check in compatibility.checks:
+                marker = {
+                    "pass": "✓",
+                    "warning": "⚠",
+                    "fail": "✕",
+                    "unknown": "?",
+                }.get(check.status.value, "•")
+                self.messages.addItem(f"{marker} {check.label}: {check.message}")
+        if not self.messages.count():
+            self.messages.addItem("✓ 경고 및 제약 위반 없음")
+
+    def display_error(self, message: str) -> None:
+        self.summary.setText("계산 실패")
+        self.values.clear()
+        self.messages.clear()
+        self.messages.addItem(f"✕ {message}")
+
+    def set_optimizing(self, active: bool) -> None:
+        self.optimize_button.setEnabled(not active)
+        self.cancel_button.setEnabled(active)
+        if active:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(0)
+            self.optimization_results.clear()
+        else:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(100)
+
+    @Slot(float, str)
+    def update_optimization_progress(self, fraction: float, message: str) -> None:
+        self.progress.setValue(round(max(0.0, min(1.0, fraction)) * 100.0))
+        self.summary.setText(message)
+
+    def display_optimization(self, result: Any) -> None:
+        self.set_optimizing(False)
+        self.optimization_results.clear()
+        if result.cancelled:
+            self.optimization_results.addItem("사용자 취소")
+            return
+        if not result.candidates:
+            self.optimization_results.addItem("유효 후보 없음")
+            for violation in result.infeasible_reasons:
+                self.optimization_results.addItem(f"· {violation.message}")
+            return
+        for rank, candidate in enumerate(result.candidates, start=1):
+            from PySide6.QtWidgets import QListWidgetItem
+
+            row = QListWidgetItem(
+                f"{rank}. {candidate.lens_id} · "
+                f"α {candidate.solution.alpha_deg:.3f}° · "
+                f"β {candidate.solution.beta_deg:.3f}° · "
+                f"{candidate.objective_mm_per_pixel:.6g} mm/px"
+            )
+            row.setData(Qt.ItemDataRole.UserRole, candidate)
+            self.optimization_results.addItem(row)
+
+    def _select_candidate(self, item) -> None:
+        candidate = item.data(Qt.ItemDataRole.UserRole)
+        if candidate is not None:
+            self.candidate_selected.emit(candidate)
+
+
+class _OptimizationWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+    progress = Signal(float, str)
+
+    def __init__(self, request: Any, cancelled: threading.Event) -> None:
+        super().__init__()
+        self.request = request
+        self.cancelled = cancelled
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            from scheimpflug_optimeter.optimization import optimize_design
+
+            result = optimize_design(
+                self.request,
+                progress=lambda fraction, message: self.progress.emit(
+                    fraction,
+                    message,
+                ),
+                cancelled=self.cancelled.is_set,
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(result)
+
+
+class DesignWidget(QWidget):
+    """Three-part live design workspace."""
+
+    solution_changed = Signal(object, object)
+
+    def __init__(self, facade: OpticalCoreFacade | None = None, parent=None) -> None:
+        super().__init__(parent)
+        self.facade = facade or OpticalCoreFacade()
+        self.solution: Any | None = None
+        self.snapshot: SceneSnapshot | None = None
+        self.selected_optimization: dict[str, Any] | None = None
+        self._optimization_thread: QThread | None = None
+        self._optimization_worker: _OptimizationWorker | None = None
+        self._optimization_cancel = threading.Event()
+
+        layout = QVBoxLayout(self)
+        toolbar = QHBoxLayout()
+        self.fit_button = QPushButton("전체 맞춤")
+        self.head_zoom_button = QPushButton("광학 헤드 확대")
+        self.export_png_button = QPushButton("PNG 내보내기")
+        self.export_svg_button = QPushButton("SVG 내보내기")
+        self.performance = QLabel("대기")
+        toolbar.addWidget(self.fit_button)
+        toolbar.addWidget(self.head_zoom_button)
+        toolbar.addWidget(self.export_png_button)
+        toolbar.addWidget(self.export_svg_button)
+        toolbar.addStretch(1)
+        toolbar.addWidget(self.performance)
+        layout.addLayout(toolbar)
+
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.input_panel = DesignInputPanel(self.facade)
+        self.scene = OpticsGraphicsScene(self)
+        self.view = OpticsGraphicsView(self.scene)
+        self.result_panel = ResultPanel()
+        self.splitter.addWidget(self._scroll(self.input_panel))
+        self.splitter.addWidget(self.view)
+        self.splitter.addWidget(self._scroll(self.result_panel))
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setSizes([330, 850, 370])
+        layout.addWidget(self.splitter, 1)
+
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(16)
+        self._debounce.timeout.connect(self.recalculate)
+        self._initial_calculation = QTimer(self)
+        self._initial_calculation.setSingleShot(True)
+        self._initial_calculation.timeout.connect(self.recalculate)
+        self.input_panel.changed.connect(self.schedule_recalculation)
+        self.fit_button.clicked.connect(self.view.fit_scene)
+        self.head_zoom_button.clicked.connect(self.view.fit_optical_head)
+        self.result_panel.optimize_requested.connect(self.start_optimization)
+        self.result_panel.cancel_requested.connect(self.cancel_optimization)
+        self.result_panel.candidate_selected.connect(self.apply_candidate)
+        self._initial_calculation.start(0)
+
+    @staticmethod
+    def _scroll(widget: QWidget) -> QScrollArea:
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setWidget(widget)
+        area.setMinimumWidth(300)
+        return area
+
+    def schedule_recalculation(self) -> None:
+        self._debounce.start()
+
+    @Slot()
+    def recalculate(self) -> None:
+        from time import perf_counter
+
+        started = perf_counter()
+        try:
+            solution, _lens, snapshot = self.facade.solve(self.input_panel.values())
+            compatibility = None
+            if self.input_panel.values()["mode"] == "canonical":
+                compatibility = self.facade.compatibility(
+                    self.input_panel.values()["camera_id"],
+                    self.input_panel.values()["lens_id"],
+                    solution,
+                )
+        except Exception as exc:
+            self.solution = None
+            self.snapshot = None
+            message = str(exc)
+            self.scene.set_invalid_message(message)
+            self.result_panel.display_error(message)
+            self.performance.setText(f"계산 실패 · {(perf_counter() - started) * 1000.0:.1f} ms")
+            self.solution_changed.emit(None, None)
+            return
+
+        self.solution = solution
+        self.snapshot = snapshot
+        self.scene.set_snapshot(snapshot)
+        if self.view.transform().isIdentity():
+            self.view.fit_scene()
+        self.result_panel.display_solution(solution, compatibility)
+        elapsed_ms = (perf_counter() - started) * 1000.0
+        self.performance.setText(
+            f"{elapsed_ms:.1f} ms" + (" · 목표 이내" if elapsed_ms <= 100.0 else " · 100 ms 초과")
+        )
+        self.solution_changed.emit(solution, snapshot)
+
+    @Slot(str)
+    def start_optimization(self, algorithm: str) -> None:
+        if self._optimization_thread is not None:
+            return
+        try:
+            request = self.facade.optimization_request(
+                self.input_panel.values(),
+                algorithm,
+            )
+        except Exception as exc:
+            self.result_panel.display_error(str(exc))
+            return
+        self._optimization_cancel.clear()
+        thread = QThread(self)
+        worker = _OptimizationWorker(request, self._optimization_cancel)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._optimization_finished)
+        worker.failed.connect(self._optimization_failed)
+        worker.progress.connect(self.result_panel.update_optimization_progress)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._optimization_thread_finished)
+        self._optimization_thread = thread
+        self._optimization_worker = worker
+        self.result_panel.set_optimizing(True)
+        thread.start()
+
+    @Slot()
+    def cancel_optimization(self) -> None:
+        self._optimization_cancel.set()
+        self.result_panel.summary.setText("현재 세대가 끝난 뒤 최적화를 취소합니다…")
+
+    @Slot(object)
+    def _optimization_finished(self, result: Any) -> None:
+        self.result_panel.display_optimization(result)
+
+    @Slot(str)
+    def _optimization_failed(self, message: str) -> None:
+        self.result_panel.set_optimizing(False)
+        self.result_panel.optimization_results.addItem(f"최적화 실패: {message}")
+
+    @Slot()
+    def _optimization_thread_finished(self) -> None:
+        self._optimization_thread = None
+        self._optimization_worker = None
+
+    @Slot(object)
+    def apply_candidate(self, candidate: Any) -> None:
+        values = {
+            "lens_id": candidate.lens_id,
+            "alpha_deg": candidate.solution.alpha_deg,
+            "beta_deg": candidate.solution.beta_deg,
+        }
+        self.selected_optimization = {
+            "lens_id": candidate.lens_id,
+            "alpha_deg": candidate.solution.alpha_deg,
+            "beta_deg": candidate.solution.beta_deg,
+            "objective_mm_per_pixel": candidate.objective_mm_per_pixel,
+        }
+        self.input_panel.apply_values(values)
+
+    def project_input(self) -> dict[str, Any]:
+        return self.input_panel.values()
+
+    def apply_project_input(self, values: Mapping[str, Any]) -> None:
+        self.input_panel.apply_values(values)
+
+    def export_snapshot_dict(self) -> dict[str, Any]:
+        if self.solution is None:
+            return {}
+        raw = asdict(self.solution) if is_dataclass(self.solution) else dict(vars(self.solution))
+
+        def make_json_safe(value: Any):
+            if hasattr(value, "value"):
+                return value.value
+            if isinstance(value, Mapping):
+                return {key: make_json_safe(item) for key, item in value.items()}
+            if isinstance(value, (tuple, list)):
+                return [make_json_safe(item) for item in value]
+            return value
+
+        return make_json_safe(raw)
+
+    def shutdown(self) -> None:
+        self._initial_calculation.stop()
+        self._debounce.stop()
+        self.cancel_optimization()
+        thread = self._optimization_thread
+        if thread is not None:
+            thread.quit()
+            thread.wait(2_000)

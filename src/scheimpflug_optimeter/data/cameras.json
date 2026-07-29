@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "verified_on": "2026-07-29",
+  "cameras": [
+    {
+      "id": "basler-aca1300-60gm",
+      "manufacturer": "Basler",
+      "model": "ace acA1300-60gm",
+      "interface": "GigE",
+      "mount": "C",
+      "max_fps": 60.0,
+      "sensor": {
+        "id": "basler-aca1300-60gm-sensor",
+        "name": "acA1300-60gm active sensor",
+        "width_px": 1282,
+        "height_px": 1026,
+        "pixel_pitch_um": 5.3,
+        "color_mode": "mono"
+      },
+      "notes": [
+        "The 6.7946 x 5.4378 mm active area matches the workbook sensor dimensions.",
+        "An M12 lens requires a C-to-M12 adapter and an independent Scheimpflug tilt mechanism."
+      ],
+      "source_url": "https://docs.baslerweb.com/aca1300-60gm"
+    },
+    {
+      "id": "basler-daa1280-54um",
+      "manufacturer": "Basler",
+      "model": "dart daA1280-54um",
+      "interface": "USB 3.0",
+      "mount": "S",
+      "max_fps": 54.0,
+      "sensor": {
+        "id": "basler-daa1280-54um-sensor",
+        "name": "daA1280-54um active sensor",
+        "width_px": 1280,
+        "height_px": 960,
+        "pixel_pitch_um": 3.75,
+        "color_mode": "mono"
+      },
+      "notes": [],
+      "source_url": "https://docs.baslerweb.com/daa1280-54um"
+    },
+    {
+      "id": "basler-dma2048-37gm",
+      "manufacturer": "Basler",
+      "model": "dart dmA2048-37gm",
+      "interface": "GigE",
+      "mount": "C/S/CS (accessory)",
+      "max_fps": 37.2,
+      "sensor": {
+        "id": "basler-dma2048-37gm-sensor",
+        "name": "dmA2048-37gm active sensor",
+        "width_px": 2064,
+        "height_px": 1552,
+        "pixel_pitch_um": 2.25,
+        "color_mode": "mono"
+      },
+      "notes": [
+        "The camera supports C-, S-, and CS-mount accessory configurations; the installed accessory must be verified."
+      ],
+      "source_url": "https://docs.baslerweb.com/dma2048-37gm"
+    },
+    {
+      "id": "basler-daa2448-70um",
+      "manufacturer": "Basler",
+      "model": "dart daA2448-70um",
+      "interface": "USB 3.0",
+      "mount": "S",
+      "max_fps": 72.8,
+      "sensor": {
+        "id": "basler-daa2448-70um-sensor",
+        "name": "daA2448-70um default active sensor",
+        "width_px": 2448,
+        "height_px": 2048,
+        "pixel_pitch_um": 2.74,
+        "color_mode": "mono"
+      },
+      "notes": [
+        "The sensor has a 2472 x 2064 full array; this profile uses the documented 2448 x 2048 default image size.",
+        "The maximum rate depends on the selected operating mode and ROI."
+      ],
+      "source_url": "https://docs.baslerweb.com/daa2448-70um"
+    }
+  ]
+}
