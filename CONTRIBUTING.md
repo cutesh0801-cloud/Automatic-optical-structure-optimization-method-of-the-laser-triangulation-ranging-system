@@ -19,3 +19,15 @@ Changes to a formula require:
 1. a source or derivation in `docs/formulas.md`;
 2. a numeric regression test;
 3. an explicit validity domain and singularity test.
+
+## Releases
+
+Ordinary `main` and tag pushes never publish a release. Version releases are
+manual-only and reserved for large, coherent updates; routine fixes and small
+features do not change the application version. A maintenance prerelease may
+also be triggered by creating a new `release/build-YYYYMMDD.N` branch that
+points to the exact latest remote `main` SHA. Published tags, releases, and
+assets are never overwritten through the workflow. Complete the appropriate
+checklist and partial-failure runbook in
+[`docs/release-policy.md`](docs/release-policy.md) before starting the
+`Release` workflow.

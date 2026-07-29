@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  role="img"
+  aria-labelledby="title description"
+>
+  <title id="title">Scheimpflug OptiMeter application icon</title>
+  <desc id="description">
+    An original optical geometry mark with a red laser, cyan lens, tilted amber
+    sensor, image rays, and three planes meeting at the Scheimpflug intersection.
+  </desc>
+  <defs>
+    <linearGradient id="background" x1="72" y1="36" x2="454" y2="482">
+      <stop offset="0" stop-color="#153B61"/>
+      <stop offset="0.58" stop-color="#0A2239"/>
+      <stop offset="1" stop-color="#071724"/>
+    </linearGradient>
+    <linearGradient id="lens" x1="-22" y1="-54" x2="22" y2="54">
+      <stop offset="0" stop-color="#E5FAFF"/>
+      <stop offset="0.45" stop-color="#57D7F5"/>
+      <stop offset="1" stop-color="#168DC3"/>
+    </linearGradient>
+    <linearGradient id="sensor" x1="-58" y1="0" x2="58" y2="0">
+      <stop offset="0" stop-color="#F59E0B"/>
+      <stop offset="0.52" stop-color="#FFD166"/>
+      <stop offset="1" stop-color="#E77A10"/>
+    </linearGradient>
+    <radialGradient id="target" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.35" stop-color="#FFB2AC"/>
+      <stop offset="1" stop-color="#FF3B30"/>
+    </radialGradient>
+    <clipPath id="frame">
+      <rect x="18" y="18" width="476" height="476" rx="104"/>
+    </clipPath>
+  </defs>
+
+  <rect x="18" y="18" width="476" height="476" rx="104" fill="url(#background)"/>
+  <g clip-path="url(#frame)">
+    <path
+      d="M26 398 C144 302 254 344 494 162 L494 494 L26 494 Z"
+      fill="#0B3150"
+      opacity="0.55"
+    />
+    <path
+      d="M410 36 L410 422"
+      fill="none"
+      stroke="#51DDB1"
+      stroke-width="7"
+      stroke-linecap="round"
+      opacity="0.82"
+    />
+
+    <!-- The three extended planes meet at one Scheimpflug intersection. -->
+    <path
+      d="M410 36 L260 248 L211 317"
+      fill="none"
+      stroke="#67DDF6"
+      stroke-width="4"
+      stroke-linecap="round"
+      stroke-dasharray="10 11"
+      opacity="0.64"
+    />
+    <path
+      d="M410 36 L146 167 L72 204"
+      fill="none"
+      stroke="#FFC45B"
+      stroke-width="4"
+      stroke-linecap="round"
+      stroke-dasharray="10 11"
+      opacity="0.66"
+    />
+    <circle cx="410" cy="36" r="13" fill="#F7FBFF" opacity="0.2"/>
+    <circle cx="410" cy="36" r="6" fill="#FFFFFF"/>
+
+    <!-- Imaging cone from the illuminated target through the lens to the sensor. -->
+    <path
+      d="M410 354 L228 293 L195 142"
+      fill="none"
+      stroke="#B9A7FF"
+      stroke-width="5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      opacity="0.82"
+    />
+    <path
+      d="M410 354 L292 203 L97 192"
+      fill="none"
+      stroke="#86C9FF"
+      stroke-width="5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      opacity="0.78"
+    />
+    <path
+      d="M410 354 L260 248 L146 167"
+      fill="none"
+      stroke="#EAF7FF"
+      stroke-width="3"
+      stroke-linecap="round"
+      opacity="0.78"
+    />
+
+    <!-- Laser emitter and its measurement line. -->
+    <path
+      d="M82 354 L410 354"
+      fill="none"
+      stroke="#FF3B30"
+      stroke-width="11"
+      stroke-linecap="round"
+      opacity="0.98"
+    />
+    <path
+      d="M84 352 L410 352"
+      fill="none"
+      stroke="#FFD0CC"
+      stroke-width="2"
+      stroke-linecap="round"
+      opacity="0.9"
+    />
+    <rect x="40" y="327" width="52" height="54" rx="15" fill="#132A40" stroke="#6C8297" stroke-width="4"/>
+    <rect x="71" y="337" width="24" height="34" rx="9" fill="#273E54"/>
+    <circle cx="82" cy="354" r="8" fill="#FF5B50"/>
+    <circle cx="410" cy="354" r="18" fill="#FF3B30" opacity="0.18"/>
+    <circle cx="410" cy="354" r="10" fill="url(#target)"/>
+
+    <!-- Biconvex lens on the tilted lens plane. -->
+    <g transform="translate(260 248) rotate(35.2)">
+      <path
+        d="M0 -58 C-22 -41 -22 41 0 58 C22 41 22 -41 0 -58 Z"
+        fill="url(#lens)"
+        stroke="#E9FBFF"
+        stroke-width="4"
+        stroke-linejoin="round"
+      />
+      <path d="M0 -45 C-8 -25 -8 25 0 45" fill="none" stroke="#FFFFFF" stroke-width="4" opacity="0.68"/>
+    </g>
+
+    <!-- Physical sensor package, deliberately tilted against the optical axis. -->
+    <g transform="translate(146 167) rotate(-26.6)">
+      <rect x="-63" y="-15" width="126" height="30" rx="10" fill="#5A3A12" opacity="0.78"/>
+      <rect x="-58" y="-10" width="116" height="20" rx="6" fill="url(#sensor)"/>
+      <path d="M-43 0 L43 0" stroke="#FFF4D6" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+    </g>
+  </g>
+  <rect
+    x="18"
+    y="18"
+    width="476"
+    height="476"
+    rx="104"
+    fill="none"
+    stroke="#78A6CC"
+    stroke-width="6"
+    opacity="0.72"
+  />
+</svg>

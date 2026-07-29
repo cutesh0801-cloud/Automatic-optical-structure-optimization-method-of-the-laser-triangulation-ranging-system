@@ -2,11 +2,15 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 
 project_root = Path(SPECPATH).resolve().parent
 datas = collect_data_files("scheimpflug_optimeter")
+datas += copy_metadata("scheimpflug-optimeter")
+application_icon = (
+    project_root / "src" / "scheimpflug_optimeter" / "assets" / "app_icon.ico"
+)
 
 a = Analysis(
     [str(project_root / "src" / "scheimpflug_optimeter" / "__main__.py")],
@@ -44,6 +48,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    icon=str(application_icon),
 )
 coll = COLLECT(
     exe,

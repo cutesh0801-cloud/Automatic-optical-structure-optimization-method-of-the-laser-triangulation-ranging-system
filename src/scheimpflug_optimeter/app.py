@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Sequence
+from importlib.resources import files
 
 from PySide6.QtCore import QCoreApplication, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication
 
+from . import __version__
 from .ui import MainWindow
 
 APPLICATION_STYLE = """
@@ -263,12 +265,25 @@ QSplitter::handle:hover {
 """
 
 
+def _load_application_icon(resource_name: str = "app_icon.png") -> QIcon:
+    """Load the bundled icon without making a cosmetic resource startup-critical."""
+
+    try:
+        payload = files("scheimpflug_optimeter.assets").joinpath(resource_name).read_bytes()
+    except Exception:
+        return QIcon()
+    pixmap = QPixmap()
+    if not pixmap.loadFromData(payload, "PNG"):
+        return QIcon()
+    return QIcon(pixmap)
+
+
 def create_application(argv: Sequence[str] | None = None) -> QApplication:
     """Return the process QApplication, creating it only once for tests/tools."""
 
     QCoreApplication.setOrganizationName("Scheimpflug OptiMeter")
     QCoreApplication.setApplicationName("Scheimpflug OptiMeter")
-    QCoreApplication.setApplicationVersion("0.1.0")
+    QCoreApplication.setApplicationVersion(__version__)
     existing = QApplication.instance()
     if existing is None:
         application = QApplication(list(argv) if argv is not None else sys.argv)
@@ -281,6 +296,9 @@ def create_application(argv: Sequence[str] | None = None) -> QApplication:
     font.setPointSize(11)
     application.setFont(font)
     application.setAttribute(Qt.ApplicationAttribute.AA_DontShowIconsInMenus, False)
+    icon = _load_application_icon()
+    if not icon.isNull():
+        application.setWindowIcon(icon)
     return application
 
 
@@ -289,6 +307,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     application = create_application(argv)
     window = MainWindow()
+    if not application.windowIcon().isNull():
+        window.setWindowIcon(application.windowIcon())
     window.show()
     return application.exec()
 

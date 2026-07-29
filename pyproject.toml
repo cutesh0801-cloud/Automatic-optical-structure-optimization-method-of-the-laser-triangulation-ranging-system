@@ -32,7 +32,13 @@ scheimpflug-optimeter = "scheimpflug_optimeter.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-scheimpflug_optimeter = ["data/*.json", "py.typed"]
+scheimpflug_optimeter = [
+  "assets/*.ico",
+  "assets/*.png",
+  "assets/*.svg",
+  "data/*.json",
+  "py.typed",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

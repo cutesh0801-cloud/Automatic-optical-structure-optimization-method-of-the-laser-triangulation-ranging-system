@@ -1,4 +1,12 @@
-# Scheimpflug OptiMeter
+<p align="center">
+  <img
+    src="src/scheimpflug_optimeter/assets/app_icon.svg"
+    width="144"
+    alt="Scheimpflug OptiMeter 로고"
+  />
+</p>
+
+<h1 align="center">Scheimpflug OptiMeter</h1>
 
 `구조설계_rev.1.xlsx`에서 사용하던 입력·수식·결과를 Windows 데스크톱
 화면으로 옮기고, 계산값에 따른 Scheimpflug 구조를 실시간으로 시각화하는
@@ -64,8 +72,15 @@ GitHub Release의 `Scheimpflug-OptiMeter-windows-x64.zip`을 내려받아
 Python이나 별도 장치 SDK·드라이버를 설치할 필요가 없습니다.
 
 릴리스에는 사용자 설명서, 정적 규격 문서, 샘플 프로젝트와 ZIP의
-SHA-256 파일이 포함됩니다. 자동 빌드 실행 파일은 코드 서명되지 않을 수
-있으므로 배포 파일 사용 전 동봉된 SHA-256 값을 확인하십시오.
+SHA-256 파일이 포함됩니다. 압축 내부 `build-info.json`에는 제품 버전,
+고유 유지보수 태그와 정확한 Git 커밋이 기록됩니다. 자동 빌드 실행 파일은
+코드 서명되지 않을 수 있으므로 배포 파일 사용 전 동봉된 SHA-256 값을
+확인하십시오.
+
+제품 버전은 대형 업데이트를 충분히 검토한 경우에만 신중하게 갱신합니다.
+일상적인 수정은 버전을 올리거나 자동 릴리스하지 않으며, 명시적으로 배포가
+필요한 경우 기존 제품 버전을 유지한 고유 `build-YYYYMMDD.N` 유지보수
+빌드로 구분합니다. 기존 태그와 릴리스 자산은 덮어쓰지 않습니다.
 
 ## 문서
 
@@ -75,6 +90,7 @@ SHA-256 파일이 포함됩니다. 자동 빌드 실행 파일은 코드 서명�
 - [Static sensor and lens profiles](docs/hardware.md)
 - [User guide](docs/user-guide.md)
 - [Research references](docs/references.md)
+- [Release policy](docs/release-policy.md)
 
 ## 규격 프로파일 주의사항
 

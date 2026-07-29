@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
+from scheimpflug_optimeter import __version__
 from scheimpflug_optimeter.project import (
     PROJECT_SUFFIX,
     ProjectDocument,
@@ -584,7 +585,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "Scheimpflug OptiMeter",
-            "<b>Scheimpflug OptiMeter 0.1.0</b><br>"
+            f"<b>Scheimpflug OptiMeter {__version__}</b><br>"
             "워크북/CSV 기반 Scheimpflug 수치 계산·2D/3D 시각화 도구<br>"
             "정적 Basler 프로파일 FOV·샘플링·거리 민감도 비교<br>"
             "장치 연결이나 영상 측정 기능은 포함하지 않습니다.<br><br>"
