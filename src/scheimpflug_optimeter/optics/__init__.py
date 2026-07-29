@@ -3,6 +3,7 @@
 from .geometry import build_scene_geometry
 from .solvers import (
     OpticalInputError,
+    calculate_sensor_imaging_metrics,
     image_coordinate_mm,
     image_sensitivity,
     solve_alpha,
@@ -14,6 +15,7 @@ from .three_d import full_focus_angles
 __all__ = [
     "OpticalInputError",
     "build_scene_geometry",
+    "calculate_sensor_imaging_metrics",
     "full_focus_angles",
     "image_coordinate_mm",
     "image_sensitivity",

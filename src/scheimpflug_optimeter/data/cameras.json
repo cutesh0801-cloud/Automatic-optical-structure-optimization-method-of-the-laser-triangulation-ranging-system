@@ -57,7 +57,8 @@
         "color_mode": "mono"
       },
       "notes": [
-        "The camera supports C-, S-, and CS-mount accessory configurations; the installed accessory must be verified."
+        "The camera supports C-, S-, and CS-mount accessory configurations; the installed accessory must be verified.",
+        "The documented default rate is 32.6 fps; 37.2 fps requires Bandwidth Reserve Performance mode and a packet size of 4000."
       ],
       "source_url": "https://docs.baslerweb.com/dma2048-37gm"
     },
@@ -78,7 +79,7 @@
       },
       "notes": [
         "The sensor has a 2472 x 2064 full array; this profile uses the documented 2448 x 2048 default image size.",
-        "The maximum rate depends on the selected operating mode and ROI."
+        "The documented default rate is 29.8 fps; 72.8 fps requires disabling Device Link Throughput Limit."
       ],
       "source_url": "https://docs.baslerweb.com/daa2448-70um"
     }

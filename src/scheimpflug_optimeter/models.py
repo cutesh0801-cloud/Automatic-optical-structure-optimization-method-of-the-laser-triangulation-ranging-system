@@ -193,6 +193,57 @@ class WorkbookDesignInput:
 
 
 @dataclass(frozen=True, slots=True)
+class SensorImagingMetrics:
+    """Object-space coverage and sampling for one static sensor profile.
+
+    ``horizontal`` and ``vertical`` refer to the camera sensor axes.  The
+    selected ``sensor_axis`` is the triangulation/range axis; its field of view
+    uses the exact nonlinear Scheimpflug image mapping.  The orthogonal axis
+    uses the reference-plane thin-lens magnification ``fp / lo``.
+
+    Range positions are signed offsets from the design reference target.
+    Local range sensitivity is ``ds/dpixel`` in millimetres per pixel.  Metrics
+    that cannot be defined because the active sensor crosses the mapping pole
+    are ``None`` and ``valid`` is false; they are never represented by a
+    plausible-looking infinity.
+    """
+
+    sensor: SensorProfile
+    sensor_axis: Literal["width", "height"]
+    valid: bool
+    horizontal_fov_mm: float | None
+    vertical_fov_mm: float | None
+    horizontal_sampling_mm_per_px: float | None
+    vertical_sampling_mm_per_px: float | None
+    range_min_offset_mm: float | None
+    range_max_offset_mm: float | None
+    range_sensitivity_near_mm_per_px: float | None
+    range_sensitivity_center_mm_per_px: float | None
+    range_sensitivity_far_mm_per_px: float | None
+    range_sensitivity_worst_mm_per_px: float | None
+    invalid_reason: str | None = None
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def resolution_px(self) -> tuple[int, int]:
+        """Return ``(horizontal, vertical)`` active pixel counts."""
+
+        return self.sensor.width_px, self.sensor.height_px
+
+    @property
+    def dimensions_mm(self) -> tuple[float, float]:
+        """Return ``(horizontal, vertical)`` active dimensions in millimetres."""
+
+        return self.sensor.width_mm, self.sensor.height_mm
+
+    @property
+    def range_fov_mm(self) -> float | None:
+        if self.range_min_offset_mm is None or self.range_max_offset_mm is None:
+            return None
+        return self.range_max_offset_mm - self.range_min_offset_mm
+
+
+@dataclass(frozen=True, slots=True)
 class DesignSolution:
     """Complete numerical result from either optical solver."""
 
@@ -221,6 +272,7 @@ class DesignSolution:
     violations: tuple[ConstraintViolation, ...] = ()
     warnings: tuple[str, ...] = ()
     diagnostics: tuple[tuple[str, float], ...] = ()
+    sensor_metrics: SensorImagingMetrics | None = None
 
     @property
     def l_required_mm(self) -> float:

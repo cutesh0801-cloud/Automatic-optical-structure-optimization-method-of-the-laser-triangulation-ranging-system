@@ -6,17 +6,35 @@ current manufacturer drawing before purchasing parts or machining a mount.
 
 ## Basler sensor specification presets
 
-| Static profile | Active pixels | Pitch | Active size | Interface | Mount |
-| --- | ---: | ---: | ---: | --- | --- |
-| ace acA1300-60gm | 1282 × 1026 | 5.3 µm | 6.7946 × 5.4378 mm | GigE | C |
-| dart daA1280-54um | 1280 × 960 | 3.75 µm | 4.8000 × 3.6000 mm | USB3 | S |
-| dart dmA2048-37gm | 2064 × 1552 | 2.25 µm | 4.6440 × 3.4920 mm | GigE | model variant |
-| dart daA2448-70um | 2448 × 2048 | 2.74 µm | 6.7075 × 5.6115 mm | USB3 | S |
+| Static profile | Active pixels | Pitch | Active size | Documented rate | Interface | Mount |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| ace acA1300-60gm | 1282 × 1026 | 5.3 µm | 6.7946 × 5.4378 mm | 60 fps | GigE | C |
+| dart daA1280-54um | 1280 × 960 | 3.75 µm | 4.8000 × 3.6000 mm | 54 fps | USB3 | S |
+| dart dmA2048-37gm | 2064 × 1552 | 2.25 µm | 4.6440 × 3.4920 mm | 32.6 fps default; 37.2 fps performance settings | GigE | model variant |
+| dart daA2448-70um | 2448 × 2048 default | 2.74 µm | 6.7075 × 5.6115 mm | 29.8 fps default; 72.8 fps without link limit | USB3 | S |
 
 `acA1300-60gm` is the default because its 6.7946×5.4378 mm active dimensions
 match the spreadsheet values used for regression. Selecting it only makes
 these constants available to the solver. No pylon runtime, driver, network
 connection, serial number, or physical camera is involved.
+
+For one optical solution, the application recalculates every profile rather
+than scaling the selected profile's result. The comparison includes:
+
+- horizontal and vertical object-space FOV;
+- average horizontal and vertical object sampling in µm/px;
+- near, centre, far and worst local range sensitivity in mm/px;
+- native pixel count, pixel pitch, active area and documented frame rate.
+
+The selected triangulation axis uses the exact tilted-sensor inverse mapping.
+The orthogonal axis uses the nominal reference-plane magnification. Therefore
+the two FOV values are not interchangeable, and rotating the sensor changes
+which physical dimension controls the nonlinear range field.
+
+“Range sensitivity” means geometric distance change per sensor pixel. It is
+not quantum efficiency, signal-to-noise ratio or minimum detectable
+illumination. Those photometric quantities depend on wavelength, exposure,
+gain, lens transmission and noise data that this simulator does not model.
 
 Official product pages used for the static metadata:
 
