@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "project_name": "구조설계 워크북 · acA1300-60gm 센서 규격 예제",
+  "design_input": {
+    "mode": "workbook",
+    "sensor_axis": "height",
+    "v_mm": 205.0,
+    "d_mm": 100.0,
+    "sensor_length_mm": 5.4378,
+    "alpha_deg": 14.27
+  },
+  "hardware": {
+    "camera_id": "basler-aca1300-60gm",
+    "lens_id": "edmund-33-879"
+  },
+  "selected_optimization": null,
+  "ui_state": {
+    "active_tab": 0,
+    "design_splitter_sizes": [
+      300,
+      820,
+      340
+    ]
+  }
+}

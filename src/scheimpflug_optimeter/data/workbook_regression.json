@@ -1,0 +1,615 @@
+{
+  "schema_version": 2,
+  "source_sha256": "6DEDD80CD629C80FFC59C7476CA019D98539038C6B0E72AB5A7869B914798455",
+  "source_included_in_repository": false,
+  "audited_on": "2026-07-29",
+  "scenario_counts": {
+    "total": 16,
+    "runnable": 4,
+    "blocked_missing_sensor_length": 12
+  },
+  "regression_tolerance": {
+    "relative": 1e-09,
+    "absolute": 1e-10
+  },
+  "formula_contract": {
+    "beta_deg": "90 - alpha_deg",
+    "baseline_mm": "v_mm * tan(alpha_deg)",
+    "half_sensor_mm": "sensor_length_mm / 2",
+    "width_mm": "baseline_mm + half_sensor_mm",
+    "rear_mm": "v_mm - d_mm",
+    "fp_mm": "baseline_mm * cos(beta_deg)",
+    "lo_mm": "v_mm * cos(alpha_deg)",
+    "total_mm": "fp_mm + lo_mm",
+    "ray_intercept_s_mm": "half_sensor_mm * lo_mm * sin(beta_deg) / (fp_mm * sin(alpha_deg) - half_sensor_mm * sin(alpha_deg + beta_deg))",
+    "f_derived_mm": "1 / (1 / lo_mm + 1 / fp_mm)",
+    "alpha_equation_residual": "sin(alpha_deg)^2 * cos(alpha_deg) - focal_length_literal_mm / v_mm"
+  },
+  "sensor_context": {
+    "width_px": 1282,
+    "height_px": 1026,
+    "pixel_pitch_mm": 0.0053,
+    "width_mm": 6.7946,
+    "height_mm": 5.4378,
+    "cells": {
+      "width_px": "C2",
+      "height_px": "C3",
+      "pixel_pitch_mm": "C4",
+      "width_mm": "C5",
+      "height_mm": "C6"
+    }
+  },
+  "complete_cases": [
+    {
+      "id": "sheet1_a_s1",
+      "sheet": "Sheet1",
+      "block": "A",
+      "scenario": "S1",
+      "cells": {
+        "v_mm": "C14",
+        "d_mm": "C18",
+        "sensor_length_mm": "C22",
+        "alpha_deg": "C23",
+        "beta_deg": "C24",
+        "baseline_mm": "C12",
+        "width_mm": "C11",
+        "rear_mm": "C16",
+        "lo_mm": "C20",
+        "fp_mm": "C19",
+        "total_mm": "C21",
+        "ray_intercept_s_mm": "C15",
+        "workbook_f_literal_mm": "C25",
+        "f_derived_mm": "D25",
+        "alpha_reference_deg": "C35",
+        "alpha_reference_rad": "C36",
+        "alpha_reference_residual": "C37",
+        "rm_cmos_distance_mm": "C32",
+        "fov_mm": "C33"
+      },
+      "input": {
+        "v_mm": 205.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": 5.4378,
+        "alpha_deg": 14.27,
+        "focal_length_literal_mm": 12.0,
+        "alpha_reference_deg": 14.268293201589602,
+        "rm_cmos_distance_mm": 5.844,
+        "fov_mm": 54.51,
+        "provenance_id": "sheet1_a_s1"
+      },
+      "expected": {
+        "beta_deg": 75.73,
+        "baseline_mm": 52.13954827543338,
+        "width_mm": 54.858448275433375,
+        "rear_mm": 105.0,
+        "lo_mm": 198.6747100249584,
+        "fp_mm": 12.851960856909953,
+        "total_mm": 211.52667088186834,
+        "ray_intercept_s_mm": 1165.9442466162743,
+        "workbook_f_literal_mm": 12.0,
+        "f_derived_mm": 12.071099998187368,
+        "alpha_reference_residual": 0.000333482687452806
+      }
+    },
+    {
+      "id": "sheet1_b_s1",
+      "sheet": "Sheet1",
+      "block": "B",
+      "scenario": "S1",
+      "cells": {
+        "v_mm": "C43",
+        "d_mm": "C47",
+        "sensor_length_mm": "C51",
+        "alpha_deg": "C52",
+        "beta_deg": "C53",
+        "baseline_mm": "C41",
+        "width_mm": "C40",
+        "rear_mm": "C45",
+        "lo_mm": "C49",
+        "fp_mm": "C48",
+        "total_mm": "C50",
+        "ray_intercept_s_mm": "C44",
+        "workbook_f_literal_mm": "C54",
+        "f_derived_mm": "D54",
+        "alpha_reference_deg": "C65",
+        "alpha_reference_rad": "C66",
+        "alpha_reference_residual": "C67",
+        "rm_cmos_distance_mm": "C62",
+        "fov_mm": "C63"
+      },
+      "input": {
+        "v_mm": 200.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": 3.0,
+        "alpha_deg": 14.76,
+        "focal_length_literal_mm": 12.5,
+        "alpha_reference_deg": 14.756115225273112,
+        "rm_cmos_distance_mm": 9.9,
+        "fov_mm": 59.99,
+        "provenance_id": "sheet1_b_s1"
+      },
+      "expected": {
+        "beta_deg": 75.24,
+        "baseline_mm": 52.692933549234034,
+        "width_mm": 54.192933549234034,
+        "rear_mm": 100.0,
+        "lo_mm": 193.400297552487,
+        "fp_mm": 13.424616918724588,
+        "total_mm": 206.82491447121157,
+        "ray_intercept_s_mm": 146.09293389938426,
+        "workbook_f_literal_mm": 12.5,
+        "f_derived_mm": 12.553250237030195,
+        "alpha_reference_residual": 0.0002350700143058937
+      }
+    },
+    {
+      "id": "test_a_s1",
+      "sheet": "test",
+      "block": "A",
+      "scenario": "S1",
+      "cells": {
+        "v_mm": "C14",
+        "d_mm": "C18",
+        "sensor_length_mm": "C22",
+        "alpha_deg": "C23",
+        "beta_deg": "C24",
+        "baseline_mm": "C12",
+        "width_mm": "C11",
+        "rear_mm": "C16",
+        "lo_mm": "C20",
+        "fp_mm": "C19",
+        "total_mm": "C21",
+        "ray_intercept_s_mm": "C15",
+        "workbook_f_literal_mm": "C25",
+        "f_derived_mm": "D25",
+        "alpha_reference_deg": "C35",
+        "alpha_reference_rad": "C36",
+        "alpha_reference_residual": "C37",
+        "rm_cmos_distance_mm": "C32",
+        "fov_mm": "C33"
+      },
+      "input": {
+        "v_mm": 200.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": 5.4378,
+        "alpha_deg": 21.49,
+        "focal_length_literal_mm": 25.0,
+        "alpha_reference_deg": 21.492503982914965,
+        "rm_cmos_distance_mm": 5.844,
+        "fov_mm": 54.51,
+        "provenance_id": "test_a_s1"
+      },
+      "expected": {
+        "beta_deg": 68.51,
+        "baseline_mm": 78.7417750131383,
+        "width_mm": 81.4606750131383,
+        "rear_mm": 100.0,
+        "lo_mm": 186.09630406836385,
+        "fp_mm": 28.846169938565946,
+        "total_mm": 214.94247400692979,
+        "ray_intercept_s_mm": 59.98574763641689,
+        "workbook_f_literal_mm": 25.0,
+        "f_derived_mm": 24.974894500944448,
+        "alpha_reference_residual": -0.00009995259546749513
+      }
+    },
+    {
+      "id": "test_b_s1",
+      "sheet": "test",
+      "block": "B",
+      "scenario": "S1",
+      "cells": {
+        "v_mm": "C43",
+        "d_mm": "C47",
+        "sensor_length_mm": "C51",
+        "alpha_deg": "C52",
+        "beta_deg": "C53",
+        "baseline_mm": "C41",
+        "width_mm": "C40",
+        "rear_mm": "C45",
+        "lo_mm": "C49",
+        "fp_mm": "C48",
+        "total_mm": "C50",
+        "ray_intercept_s_mm": "C44",
+        "workbook_f_literal_mm": "C54",
+        "f_derived_mm": "D54",
+        "alpha_reference_deg": "C65",
+        "alpha_reference_rad": "C66",
+        "alpha_reference_residual": "C67",
+        "rm_cmos_distance_mm": "C62",
+        "fov_mm": "C63"
+      },
+      "input": {
+        "v_mm": 200.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": 3.0,
+        "alpha_deg": 14.76,
+        "focal_length_literal_mm": 12.5,
+        "alpha_reference_deg": 14.756115225273112,
+        "rm_cmos_distance_mm": 9.9,
+        "fov_mm": 59.99,
+        "provenance_id": "test_b_s1"
+      },
+      "expected": {
+        "beta_deg": 75.24,
+        "baseline_mm": 52.692933549234034,
+        "width_mm": 54.192933549234034,
+        "rear_mm": 100.0,
+        "lo_mm": 193.400297552487,
+        "fp_mm": 13.424616918724588,
+        "total_mm": 206.82491447121157,
+        "ray_intercept_s_mm": 146.09293389938426,
+        "workbook_f_literal_mm": 12.5,
+        "f_derived_mm": 12.553250237030195,
+        "alpha_reference_residual": 0.0002350700143058937
+      }
+    }
+  ],
+  "excluded_incomplete_cases": [
+    {
+      "id": "sheet1_a_s2",
+      "sheet": "Sheet1",
+      "block": "A",
+      "scenario": "S2",
+      "cells": {
+        "v_mm": "H14",
+        "d_mm": "H18",
+        "sensor_length_mm": "H22",
+        "alpha_deg": "H23",
+        "focal_length_literal_mm": "H25",
+        "alpha_reference_deg": "H35",
+        "rm_cmos_distance_mm": "H32",
+        "fov_mm": "H33"
+      },
+      "missing_source_cell": "W24",
+      "input": {
+        "v_mm": 200.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 17.64,
+        "focal_length_literal_mm": 17.5,
+        "alpha_reference_deg": 17.638633,
+        "rm_cmos_distance_mm": 5.196,
+        "fov_mm": 77.8,
+        "provenance_id": "sheet1_a_s2"
+      }
+    },
+    {
+      "id": "sheet1_a_s3",
+      "sheet": "Sheet1",
+      "block": "A",
+      "scenario": "S3",
+      "cells": {
+        "v_mm": "M14",
+        "d_mm": "M18",
+        "sensor_length_mm": "M22",
+        "alpha_deg": "M23",
+        "focal_length_literal_mm": "M25",
+        "alpha_reference_deg": "M35",
+        "rm_cmos_distance_mm": "M32",
+        "fov_mm": "M33"
+      },
+      "missing_source_cell": "AB24",
+      "input": {
+        "v_mm": 250.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 15.64,
+        "focal_length_literal_mm": 17.5,
+        "alpha_reference_deg": 15.64132,
+        "rm_cmos_distance_mm": 4.825,
+        "fov_mm": 93.45,
+        "provenance_id": "sheet1_a_s3"
+      }
+    },
+    {
+      "id": "sheet1_a_s4",
+      "sheet": "Sheet1",
+      "block": "A",
+      "scenario": "S4",
+      "cells": {
+        "v_mm": "R14",
+        "d_mm": "R18",
+        "sensor_length_mm": "R22",
+        "alpha_deg": "R23",
+        "focal_length_literal_mm": "R25",
+        "alpha_reference_deg": "R35",
+        "rm_cmos_distance_mm": "R32",
+        "fov_mm": "R33"
+      },
+      "missing_source_cell": "AG24",
+      "input": {
+        "v_mm": 300.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 14.2,
+        "focal_length_literal_mm": 17.5,
+        "alpha_reference_deg": 14.197657072595083,
+        "rm_cmos_distance_mm": 4.587,
+        "fov_mm": 112.87,
+        "provenance_id": "sheet1_a_s4"
+      }
+    },
+    {
+      "id": "sheet1_b_s2",
+      "sheet": "Sheet1",
+      "block": "B",
+      "scenario": "S2",
+      "cells": {
+        "v_mm": "H43",
+        "d_mm": "H47",
+        "sensor_length_mm": "H51",
+        "alpha_deg": "H52",
+        "focal_length_literal_mm": "H54",
+        "alpha_reference_deg": "H65",
+        "rm_cmos_distance_mm": "H62",
+        "fov_mm": "H63"
+      },
+      "missing_source_cell": "W53",
+      "input": {
+        "v_mm": 200.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 16.81,
+        "focal_length_literal_mm": 16.0,
+        "alpha_reference_deg": 16.813570998973287,
+        "rm_cmos_distance_mm": 8.983,
+        "fov_mm": 81.28,
+        "provenance_id": "sheet1_b_s2"
+      }
+    },
+    {
+      "id": "sheet1_b_s3",
+      "sheet": "Sheet1",
+      "block": "B",
+      "scenario": "S3",
+      "cells": {
+        "v_mm": "M43",
+        "d_mm": "M47",
+        "sensor_length_mm": "M51",
+        "alpha_deg": "M52",
+        "focal_length_literal_mm": "M54",
+        "alpha_reference_deg": "M65",
+        "rm_cmos_distance_mm": "M62",
+        "fov_mm": "M63"
+      },
+      "missing_source_cell": "AB53",
+      "input": {
+        "v_mm": 250.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 14.92,
+        "focal_length_literal_mm": 16.0,
+        "alpha_reference_deg": 14.9231137659954,
+        "rm_cmos_distance_mm": 8.694,
+        "fov_mm": 102.57,
+        "provenance_id": "sheet1_b_s3"
+      }
+    },
+    {
+      "id": "sheet1_b_s4",
+      "sheet": "Sheet1",
+      "block": "B",
+      "scenario": "S4",
+      "cells": {
+        "v_mm": "R43",
+        "d_mm": "R47",
+        "sensor_length_mm": "R51",
+        "alpha_deg": "R52",
+        "focal_length_literal_mm": "R54",
+        "alpha_reference_deg": "R65",
+        "rm_cmos_distance_mm": "R62",
+        "fov_mm": "R63"
+      },
+      "missing_source_cell": "AG53",
+      "input": {
+        "v_mm": 300.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 13.55,
+        "focal_length_literal_mm": 16.0,
+        "alpha_reference_deg": 13.590316973663954,
+        "rm_cmos_distance_mm": 8.506,
+        "fov_mm": 123.83,
+        "provenance_id": "sheet1_b_s4"
+      }
+    },
+    {
+      "id": "test_a_s2",
+      "sheet": "test",
+      "block": "A",
+      "scenario": "S2",
+      "cells": {
+        "v_mm": "H14",
+        "d_mm": "H18",
+        "sensor_length_mm": "H22",
+        "alpha_deg": "H23",
+        "focal_length_literal_mm": "H25",
+        "alpha_reference_deg": "H35",
+        "rm_cmos_distance_mm": "H32",
+        "fov_mm": "H33"
+      },
+      "missing_source_cell": "W24",
+      "input": {
+        "v_mm": 200.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 26.21,
+        "focal_length_literal_mm": 35.0,
+        "alpha_reference_deg": 26.206570064388767,
+        "rm_cmos_distance_mm": 5.196,
+        "fov_mm": 77.8,
+        "provenance_id": "test_a_s2"
+      }
+    },
+    {
+      "id": "test_a_s3",
+      "sheet": "test",
+      "block": "A",
+      "scenario": "S3",
+      "cells": {
+        "v_mm": "M14",
+        "d_mm": "M18",
+        "sensor_length_mm": "M22",
+        "alpha_deg": "M23",
+        "focal_length_literal_mm": "M25",
+        "alpha_reference_deg": "M35",
+        "rm_cmos_distance_mm": "M32",
+        "fov_mm": "M33"
+      },
+      "missing_source_cell": "AB24",
+      "input": {
+        "v_mm": 250.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 15.64,
+        "focal_length_literal_mm": 17.5,
+        "alpha_reference_deg": 15.64132,
+        "rm_cmos_distance_mm": 4.825,
+        "fov_mm": 93.45,
+        "provenance_id": "test_a_s3"
+      }
+    },
+    {
+      "id": "test_a_s4",
+      "sheet": "test",
+      "block": "A",
+      "scenario": "S4",
+      "cells": {
+        "v_mm": "R14",
+        "d_mm": "R18",
+        "sensor_length_mm": "R22",
+        "alpha_deg": "R23",
+        "focal_length_literal_mm": "R25",
+        "alpha_reference_deg": "R35",
+        "rm_cmos_distance_mm": "R32",
+        "fov_mm": "R33"
+      },
+      "missing_source_cell": "AG24",
+      "input": {
+        "v_mm": 300.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 14.2,
+        "focal_length_literal_mm": 17.5,
+        "alpha_reference_deg": 14.197657072595083,
+        "rm_cmos_distance_mm": 4.587,
+        "fov_mm": 112.87,
+        "provenance_id": "test_a_s4"
+      }
+    },
+    {
+      "id": "test_b_s2",
+      "sheet": "test",
+      "block": "B",
+      "scenario": "S2",
+      "cells": {
+        "v_mm": "H43",
+        "d_mm": "H47",
+        "sensor_length_mm": "H51",
+        "alpha_deg": "H52",
+        "focal_length_literal_mm": "H54",
+        "alpha_reference_deg": "H65",
+        "rm_cmos_distance_mm": "H62",
+        "fov_mm": "H63"
+      },
+      "missing_source_cell": "W53",
+      "input": {
+        "v_mm": 200.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 16.81,
+        "focal_length_literal_mm": 16.0,
+        "alpha_reference_deg": 16.813570998973287,
+        "rm_cmos_distance_mm": 8.983,
+        "fov_mm": 81.28,
+        "provenance_id": "test_b_s2"
+      }
+    },
+    {
+      "id": "test_b_s3",
+      "sheet": "test",
+      "block": "B",
+      "scenario": "S3",
+      "cells": {
+        "v_mm": "M43",
+        "d_mm": "M47",
+        "sensor_length_mm": "M51",
+        "alpha_deg": "M52",
+        "focal_length_literal_mm": "M54",
+        "alpha_reference_deg": "M65",
+        "rm_cmos_distance_mm": "M62",
+        "fov_mm": "M63"
+      },
+      "missing_source_cell": "AB53",
+      "input": {
+        "v_mm": 250.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 14.92,
+        "focal_length_literal_mm": 16.0,
+        "alpha_reference_deg": 14.9231137659954,
+        "rm_cmos_distance_mm": 8.694,
+        "fov_mm": 102.57,
+        "provenance_id": "test_b_s3"
+      }
+    },
+    {
+      "id": "test_b_s4",
+      "sheet": "test",
+      "block": "B",
+      "scenario": "S4",
+      "cells": {
+        "v_mm": "R43",
+        "d_mm": "R47",
+        "sensor_length_mm": "R51",
+        "alpha_deg": "R52",
+        "focal_length_literal_mm": "R54",
+        "alpha_reference_deg": "R65",
+        "rm_cmos_distance_mm": "R62",
+        "fov_mm": "R63"
+      },
+      "missing_source_cell": "AG53",
+      "input": {
+        "v_mm": 300.0,
+        "d_mm": 100.0,
+        "sensor_length_mm": null,
+        "alpha_deg": 13.55,
+        "focal_length_literal_mm": 16.0,
+        "alpha_reference_deg": 13.590316973663954,
+        "rm_cmos_distance_mm": 8.506,
+        "fov_mm": 123.83,
+        "provenance_id": "test_b_s4"
+      }
+    }
+  ],
+  "exclusion_reason": "The sensor-length formula references an absent source cell. Excel caches L=0, x=0, s=0 and W=b; these are missing-input artifacts, not valid designs.",
+  "unresolved_items": [
+    {
+      "cells": "B17/R17 and B46/R46 groups",
+      "label": "H",
+      "reason": "All value cells are blank, so the workbook does not define a computable H quantity."
+    },
+    {
+      "cells": "C32/H32/M32/R32 and C62/H62/M62/R62",
+      "label": "RM-CMOS dis",
+      "reason": "Literal external optical/mechanical metadata with no workbook formula linking it to the structural calculation."
+    },
+    {
+      "cells": "C33/H33/M33/R33 and C63/H63/M63/R63",
+      "label": "FOV",
+      "reason": "Text metadata with no workbook formula; parsed numeric values are preserved but not recomputed."
+    },
+    {
+      "cells": "M34",
+      "label": null,
+      "value": "98.2 mm",
+      "reason": "Unlabelled value adjacent to M33; provenance only and not assigned to FOV or another variable."
+    },
+    {
+      "cells": "J33",
+      "label": null,
+      "reason": "A 32767-space string with no computational meaning; discarded."
+    }
+  ]
+}

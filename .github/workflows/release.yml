@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Resolve release
+        id: release
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+              $tag = $env:GITHUB_REF_NAME
+          }
+          else {
+              $version = python -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])"
+              $tag = "v$version"
+          }
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $publish = if ($LASTEXITCODE -eq 0) { "false" } else { "true" }
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "publish=$publish" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Output "Release tag: $tag; publish: $publish"
+      - name: Install locked environment
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          python -m pip install "uv==0.11.31"
+          uv sync --frozen --python 3.12 --extra dev
+      - name: Verify Python
+        if: steps.release.outputs.publish == 'true'
+        run: >
+          uv run --frozen python -c
+          "import sys;
+          assert sys.version_info[:2] == (3, 12), sys.version"
+      - name: Verify private source documents are not tracked
+        if: steps.release.outputs.publish == 'true'
+        shell: pwsh
+        run: >
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File packaging/verify_public_sources.ps1
+      - name: Lint
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          uv run --frozen ruff check .
+          uv run --frozen ruff format --check .
+      - name: Test
+        if: steps.release.outputs.publish == 'true'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          MPLBACKEND: Agg
+        run: uv run --frozen pytest
+      - name: Build
+        if: steps.release.outputs.publish == 'true'
+        run: uv run --frozen pyinstaller --noconfirm packaging/scheimpflug_optimeter.spec
+      - name: Smoke portable application
+        if: steps.release.outputs.publish == 'true'
+        shell: pwsh
+        run: >
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File packaging/smoke_portable.ps1
+      - name: Assemble portable archive
+        if: steps.release.outputs.publish == 'true'
+        shell: pwsh
+        run: >
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File packaging/assemble_portable.ps1
+      - name: Publish
+        if: steps.release.outputs.publish == 'true'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          $arguments = @(
+              "release", "create", $env:RELEASE_TAG,
+              "Scheimpflug-OptiMeter-windows-x64.zip",
+              "Scheimpflug-OptiMeter-windows-x64.zip.sha256",
+              "--generate-notes",
+              "--title", "Scheimpflug OptiMeter $env:RELEASE_TAG"
+          )
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+              $arguments += "--verify-tag"
+          }
+          else {
+              $arguments += @("--target", $env:GITHUB_SHA)
+          }
+          gh @arguments
