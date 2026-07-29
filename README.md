@@ -23,6 +23,8 @@ Python 3.12 시뮬레이터입니다.
 - 동일 축척을 유지하는 확대·이동·전체 맞춤과 SVG/PNG 내보내기
 - Scheimpflug 평면과 교선을 확인하는 3D 시각화
 - 정적 Basler 센서 규격 프로파일과 Edmund Optics M12 렌즈 규격 프로파일
+- 같은 광학 조건에서 Basler 프로파일별 FOV, 물체측 샘플링과 기하학적
+  거리 민감도를 비교하는 표
 - 고급 비교용 canonical 계산 및 구조 최적화
 - schema-v1 `.scheimpflug.json` 프로젝트 저장
 

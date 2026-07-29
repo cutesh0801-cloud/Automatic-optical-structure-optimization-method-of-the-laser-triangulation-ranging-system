@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+- Increased the desktop type scale and clarified the input, workspace, result,
+  warning and application-status hierarchy.
+- Added backed label callouts and collision-aware placement to keep 2D values
+  readable over optical lines.
+- Added per-profile Basler FOV, object sampling and geometric range-sensitivity
+  calculations and comparison UI.
+
 ## 0.1.0
 
 - Added workbook-compatible and canonical Scheimpflug design solvers.
