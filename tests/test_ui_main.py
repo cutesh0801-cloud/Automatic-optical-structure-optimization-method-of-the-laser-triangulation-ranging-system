@@ -43,7 +43,8 @@ def test_desktop_layout_is_readable_responsive_and_explicitly_static(qtbot):
     assert window.status_label.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
 
     inputs = window.design.input_panel
-    assert inputs.profile_group.title() == "정적 센서 규격 · 장치 연결 없음"
+    assert inputs.profile_group.title() == "정적 센서 규격"
+    assert "장치 연결 없음" in inputs.profile_notice.text()
     assert inputs.camera.accessibleName() == "정적 센서 규격 프로파일"
     assert "실제 장치를 연결하지 않습니다" in inputs.mode_help.text()
     assert inputs.parameter_group.title() == "워크북 직접 입력"

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
@@ -259,12 +260,18 @@ class DesignInputPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(11)
-        title = QLabel("Scheimpflug 설계 입력")
-        title.setObjectName("panelTitle")
-        layout.addWidget(title)
+        self.title = QLabel("Scheimpflug 설계 입력")
+        self.title.setObjectName("panelTitle")
+        self.title.setWordWrap(True)
+        self.title.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            self.title.sizePolicy().verticalPolicy(),
+        )
+        layout.addWidget(self.title)
         self.mode_help = QLabel()
         self.mode_help.setObjectName("modeHelp")
         self.mode_help.setWordWrap(True)
+        self.input_labels: dict[str, QLabel] = {}
 
         self.mode = QComboBox()
         self.mode.addItem("워크북 호환 계산 (기본)", "workbook")
@@ -312,33 +319,161 @@ class DesignInputPanel(QWidget):
         mode_group = QGroupBox("계산 방식")
         mode_form = QFormLayout(mode_group)
         self._configure_form(mode_form)
-        mode_form.addRow("모드", self.mode)
+        self._add_input_row(
+            mode_form,
+            "mode",
+            "계산 방식 · mode [선택]",
+            self.mode,
+            "Workbook은 구조설계 CSV의 V, d, L, α를 직접 재현합니다. "
+            "Canonical은 렌즈와 독립 α, β로 기울어진 결상을 비교합니다.",
+        )
         layout.addWidget(mode_group)
         layout.addWidget(self.mode_help)
 
-        self.profile_group = QGroupBox("정적 센서 규격 · 장치 연결 없음")
+        self.profile_group = QGroupBox("정적 센서 규격")
         self.profile_group.setObjectName("staticSensorGroup")
         profile_form = QFormLayout(self.profile_group)
         self._configure_form(profile_form)
-        profile_form.addRow("규격 프로파일", self.camera)
-        profile_form.addRow("계산 축", self.sensor_axis)
+        self.profile_notice = QLabel("정적 프로파일만 사용 · 장치 연결 없음")
+        self.profile_notice.setObjectName("staticSensorNotice")
+        self.profile_notice.setWordWrap(True)
+        self.profile_notice.setAccessibleName("정적 센서 규격은 실제 장치에 연결하지 않음")
+        profile_form.addRow(self.profile_notice)
+        self._add_input_row(
+            profile_form,
+            "camera",
+            "정적 센서 · camera [px/µm]",
+            self.camera,
+            "해상도, 픽셀 피치와 활성 크기를 제공하는 정적 규격 프리셋입니다. "
+            "모델명은 식별자일 뿐 실제 카메라를 검색하거나 연결하지 않습니다.",
+        )
+        self._add_input_row(
+            profile_form,
+            "sensor_axis",
+            "삼각측량 축 · axis [width/height]",
+            self.sensor_axis,
+            "기울어진 센서에서 레이저 거리 변화가 투영되는 축입니다. "
+            "선택 방향에 따라 FOV와 거리 감도 계산이 달라집니다.",
+        )
         layout.addWidget(self.profile_group)
 
         self.parameter_group = QGroupBox("워크북 직접 입력")
         form = QFormLayout(self.parameter_group)
         self._configure_form(form)
         self.form = form
-        form.addRow("Edmund M12 렌즈", self.lens)
-        form.addRow("워크북 V", self.v_mm)
-        form.addRow("워킹 디스턴스 d", self.d_mm)
-        form.addRow("센서/이미지 길이 L", self.sensor_length_container)
-        form.addRow("수광각 α", self.alpha_deg)
-        form.addRow("측정 범위 S", self.range_mm)
-        form.addRow("센서 틸트 β", self.beta_deg)
-        form.addRow("최대 폭 W", self.max_width_mm)
-        form.addRow("최대 후방 R", self.max_rear_mm)
-        form.addRow("레이저 파장", self.wavelength_nm)
+        self._add_input_row(
+            form,
+            "lens",
+            "Edmund M12 렌즈 · f [mm]",
+            self.lens,
+            "Canonical 계산에 사용할 정적 렌즈 규격입니다. "
+            "목록에는 SKU와 유효 초점거리 f가 표시됩니다.",
+        )
+        self._add_input_row(
+            form,
+            "v_mm",
+            "워크북 기준 거리 · V [mm]",
+            self.v_mm,
+            "원본 워크북 관계식에서 베이스라인 b, 물체거리 lo와 후방 R을 "
+            "유도하는 기준 거리 V입니다.",
+        )
+        self._add_input_row(
+            form,
+            "d_mm",
+            "워킹 디스턴스 · d [mm]",
+            self.d_mm,
+            "레이저 발광 기준점에서 기준 대상면까지의 설계 거리입니다. "
+            "2D 장면의 WD 치수로 표시됩니다.",
+        )
+        self._add_input_row(
+            form,
+            "sensor_length_mm",
+            "센서/이미지 길이 · L [mm]",
+            self.sensor_length_container,
+            "Workbook 계산에 직접 사용하는 유효 이미지 길이 L입니다. "
+            "정적 센서 규격값은 오른쪽 버튼으로 명시적으로 복사할 수 있습니다.",
+        )
+        self.sensor_length_mm.setToolTip(
+            "Workbook 계산에 직접 사용하는 유효 이미지 길이 L [mm]입니다."
+        )
+        self.sensor_length_mm.setAccessibleDescription(self.sensor_length_mm.toolTip())
+        self.sensor_length_mm.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            self.sensor_length_mm.sizePolicy().verticalPolicy(),
+        )
+        self.sensor_length_container.setMinimumWidth(170)
+        self._add_input_row(
+            form,
+            "alpha_deg",
+            "수광각 · α [°]",
+            self.alpha_deg,
+            "레이저축과 카메라 수광 광축 사이의 각도 α입니다.",
+        )
+        self._add_input_row(
+            form,
+            "range_mm",
+            "측정 범위 · S [mm]",
+            self.range_mm,
+            "Canonical 모드에서 기준 대상면을 중심으로 계산할 전체 깊이 범위 S입니다.",
+        )
+        self._add_input_row(
+            form,
+            "beta_deg",
+            "센서 틸트각 · β [°]",
+            self.beta_deg,
+            "Canonical 모드에서 이미지/센서 평면에 적용하는 Scheimpflug 틸트각 β입니다.",
+        )
+        self._add_input_row(
+            form,
+            "max_width_mm",
+            "기구 최대 폭 · W_max [mm]",
+            self.max_width_mm,
+            "Canonical 구조가 넘지 않아야 하는 수평 기구 외곽의 상한입니다.",
+        )
+        self._add_input_row(
+            form,
+            "max_rear_mm",
+            "후방 허용 한계 · R_max [mm]",
+            self.max_rear_mm,
+            "Canonical 구조에서 기준 위치 뒤쪽으로 허용하는 기구 외곽의 상한입니다.",
+        )
+        self._add_input_row(
+            form,
+            "wavelength_nm",
+            "레이저 파장 · λ [nm]",
+            self.wavelength_nm,
+            "선택 렌즈의 확인된 코팅 파장 범위와 호환성을 검사하는 설계 파장입니다.",
+        )
         layout.addWidget(self.parameter_group)
+
+        self.formula_card = QGroupBox("현재 모드 핵심 수식")
+        self.formula_card.setObjectName("formulaCard")
+        formula_layout = QVBoxLayout(self.formula_card)
+        formula_layout.setContentsMargins(8, 8, 8, 8)
+        formula_layout.setSpacing(5)
+        self.formula_mode_title = QLabel()
+        self.formula_mode_title.setObjectName("formulaModeTitle")
+        formula_title_font = self.formula_mode_title.font()
+        formula_title_font.setBold(True)
+        self.formula_mode_title.setFont(formula_title_font)
+        self.formula_equations = QLabel()
+        self.formula_equations.setObjectName("formulaEquations")
+        self.formula_variables = QLabel()
+        self.formula_variables.setObjectName("formulaVariables")
+        for formula_label in (
+            self.formula_mode_title,
+            self.formula_equations,
+            self.formula_variables,
+        ):
+            formula_label.setWordWrap(True)
+            formula_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.formula_equations.setAccessibleName("현재 모드 핵심 관계식")
+        self.formula_variables.setAccessibleName("현재 모드 수식 변수 대응")
+        self.formula_card.setAccessibleName("현재 계산 모드의 표시용 핵심 수식")
+        formula_layout.addWidget(self.formula_mode_title)
+        formula_layout.addWidget(self.formula_equations)
+        formula_layout.addWidget(self.formula_variables)
+        layout.addWidget(self.formula_card)
         layout.addStretch(1)
 
         accessible_names = (
@@ -392,6 +527,36 @@ class DesignInputPanel(QWidget):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+    def _add_input_row(
+        self,
+        form: QFormLayout,
+        key: str,
+        label_text: str,
+        field: QWidget,
+        help_text: str,
+    ) -> None:
+        """Add one compact, self-explanatory row without affecting calculations."""
+
+        label = QLabel(label_text)
+        label.setObjectName(f"{key}InputLabel")
+        label.setWordWrap(True)
+        label.setToolTip(help_text)
+        label.setAccessibleName(label_text)
+        label.setAccessibleDescription(help_text)
+        field.setToolTip(help_text)
+        field.setAccessibleDescription(help_text)
+        # A modest explicit minimum makes QFormLayout wrap the field below a
+        # long label instead of squeezing the editor into an unusable sliver.
+        # Ignored keeps intrinsic combo/spin size hints from forcing a
+        # horizontal scrollbar in the 315 px input pane.
+        field.setMinimumWidth(132)
+        field.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            field.sizePolicy().verticalPolicy(),
+        )
+        self.input_labels[key] = label
+        form.addRow(label, field)
 
     @staticmethod
     def _spin(
@@ -456,10 +621,30 @@ class DesignInputPanel(QWidget):
                 "L 직접 입력값이 계산의 권위값입니다. 센서 프로파일은 치수 "
                 "프리셋일 뿐 실제 장치를 연결하지 않습니다."
             )
+            self.formula_mode_title.setText("Workbook Compatibility · V, d, L, α 직접 입력")
+            self.formula_equations.setText(
+                "β=90°−α · b=V tanα · x=L/2\n"
+                "W=b+x · R=V−d · lo=V cosα · fp=b cosβ\n"
+                "s=x lo sinβ / [fp sinα − x sin(α+β)] · 1/f=1/lo+1/fp"
+            )
+            self.formula_variables.setText(
+                "변수: V 기준 거리 · d 워킹 디스턴스 · L 이미지 길이 · "
+                "α 수광각 · β 유도 센서각 · s 레이저 교차 거리"
+            )
         else:
             self.mode_help.setText(
                 "고급/연구 참고 기능입니다. 논문식 canonical 설계, 렌즈 후보 "
                 "호환성 및 구조 최적화를 비교할 때 사용하세요."
+            )
+            self.formula_mode_title.setText("Canonical Design · 독립 α, β와 렌즈 f")
+            self.formula_equations.setText(
+                "r=tanβ/tanα · lo=f(1+r) · fp=f(1+1/r)\n"
+                "x(s)=s fp sinα / [lo sinβ + s sin(α+β)]\n"
+                "L_required=|x(+S/2)−x(−S/2)|"
+            )
+            self.formula_variables.setText(
+                "변수: d 기준 WD · S 측정 범위 · f 렌즈 초점거리 · "
+                "α 수광각 · β 센서 틸트각 · s 기준면 대비 깊이"
             )
 
     @Slot()
