@@ -8,6 +8,12 @@ All notable changes to this project are documented here.
   warning and application-status hierarchy.
 - Added backed label callouts and collision-aware placement to keep 2D values
   readable over optical lines.
+- Added Korean input names, equation symbols, units, contextual help and
+  mode-specific formula cards.
+- Kept laser, lens and sensor cues visible at extreme 2D zoom levels while
+  reducing callout-layout latency.
+- Reworked the 3D view with schematic camera, lens, sensor and laser bodies,
+  labelled planes, normals, a legend and head/full-assembly view controls.
 - Added per-profile Basler FOV, object sampling and geometric range-sensitivity
   calculations and comparison UI.
 
