@@ -26,6 +26,7 @@ authorizes an append-only maintenance build.
   executable and repository documentation.
 - Replaced automatic publication with an explicit, append-only maintenance or
   product-version release workflow and documented the approval rules.
+- Updated GitHub-hosted packaging actions to their Node 24 runtime majors.
 
 ## 0.1.0
 
