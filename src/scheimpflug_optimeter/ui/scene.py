@@ -125,13 +125,13 @@ class OpticsGraphicsScene(QGraphicsScene):
         self._snapshot: SceneSnapshot | None = None
         self._first_snapshot = True
 
-        self.laser_line = self._line("laser", 2.4)
+        self.laser_line = self._line("laser", 3.0)
         self.target_near_line = self._line("target", 1.5, Qt.PenStyle.DashLine)
         self.target_nominal_line = self._line("target", 2.6)
         self.target_far_line = self._line("target", 1.5, Qt.PenStyle.DashLine)
-        self.lens_line = self._line("lens", 4.0)
+        self.lens_line = self._line("lens", 4.6)
         self.optical_axis_line = self._line("axis", 1.2, Qt.PenStyle.DashDotLine)
-        self.sensor_line = self._line("sensor", 4.2)
+        self.sensor_line = self._line("sensor", 4.8)
         self.proxy_sensor_line = self._line("proxy", 1.6, Qt.PenStyle.DashLine)
         self.near_ray_before = self._line("ray", 1.2)
         self.near_ray_after = self._line("ray", 1.2)
@@ -146,17 +146,21 @@ class OpticsGraphicsScene(QGraphicsScene):
             for name in ("wd", "range", "w", "r")
         }
 
-        self.emitter_marker = self._marker("laser", 4.0)
+        self.emitter_marker = self._marker("laser", 5.0)
         self.lens_marker = self._marker("lens", 4.0)
         self.image_marker = self._marker("sensor", 3.5)
         self.scheimpflug_marker = self._marker("warning", 4.5)
+        self.lens_plane_marker = self._screen_plane_marker("lens", 10.0, 5.2)
+        self.sensor_plane_marker = self._screen_plane_marker("sensor", 12.0, 5.4)
         self.range_remote_arrow = self._remote_arrow("dimension")
         self.scheimpflug_remote_arrow = self._remote_arrow("warning")
         self.range_remote_arrow.setVisible(False)
         self.scheimpflug_remote_arrow.setVisible(False)
 
         self.invalid_overlay = QGraphicsRectItem()
-        self.invalid_overlay.setPen(QPen(self.COLORS["invalid"], 2.2, Qt.PenStyle.DashLine))
+        invalid_overlay_pen = QPen(self.COLORS["invalid"], 2.2, Qt.PenStyle.DashLine)
+        invalid_overlay_pen.setCosmetic(True)
+        self.invalid_overlay.setPen(invalid_overlay_pen)
         self.invalid_overlay.setBrush(Qt.BrushStyle.NoBrush)
         self.addItem(self.invalid_overlay)
 
@@ -199,6 +203,42 @@ class OpticsGraphicsScene(QGraphicsScene):
         self.labels["invalid"].setZValue(51.0)
         self.invalid_overlay.setZValue(49.0)
 
+        for item in (
+            self.near_ray_before,
+            self.near_ray_after,
+            self.far_ray_before,
+            self.far_ray_after,
+        ):
+            item.setZValue(5.0)
+        for item in (
+            self.w_dimension,
+            self.r_dimension,
+            self.wd_dimension,
+            self.range_dimension,
+            *(arrow for arrows in self.dimension_arrowheads.values() for arrow in arrows),
+        ):
+            item.setZValue(8.0)
+        for item in (
+            self.target_near_line,
+            self.target_nominal_line,
+            self.target_far_line,
+        ):
+            item.setZValue(12.0)
+        self.proxy_sensor_line.setZValue(14.0)
+        self.optical_axis_line.setZValue(15.0)
+        self.laser_line.setZValue(20.0)
+        self.lens_line.setZValue(24.0)
+        self.sensor_line.setZValue(25.0)
+        for item in (
+            self.emitter_marker,
+            self.lens_marker,
+            self.image_marker,
+            self.scheimpflug_marker,
+        ):
+            item.setZValue(30.0)
+        self.lens_plane_marker.setZValue(31.0)
+        self.sensor_plane_marker.setZValue(32.0)
+
         for item in self.items():
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._normal_pens = {
@@ -211,6 +251,8 @@ class OpticsGraphicsScene(QGraphicsScene):
                 self.lens_line,
                 self.optical_axis_line,
                 self.sensor_line,
+                self.lens_plane_marker,
+                self.sensor_plane_marker,
                 self.proxy_sensor_line,
                 self.near_ray_before,
                 self.near_ray_after,
@@ -228,7 +270,25 @@ class OpticsGraphicsScene(QGraphicsScene):
         item = QGraphicsLineItem()
         pen = QPen(self.COLORS[color], width, style)
         pen.setCosmetic(True)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         item.setPen(pen)
+        self.addItem(item)
+        return item
+
+    def _screen_plane_marker(
+        self,
+        color: str,
+        half_length_px: float,
+        width_px: float,
+    ) -> QGraphicsLineItem:
+        """Create a fixed-screen-size plane glyph anchored to physical geometry."""
+
+        item = QGraphicsLineItem(-half_length_px, 0.0, half_length_px, 0.0)
+        pen = QPen(self.COLORS[color], width_px)
+        pen.setCosmetic(True)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        item.setPen(pen)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self.addItem(item)
         return item
 
@@ -294,6 +354,25 @@ class OpticsGraphicsScene(QGraphicsScene):
     @staticmethod
     def _position(item: QGraphicsItem, point: Point2D) -> None:
         item.setPos(_scene_point(point))
+
+    @staticmethod
+    def _position_screen_plane(
+        item: QGraphicsLineItem,
+        endpoints: tuple[Point2D, Point2D],
+    ) -> None:
+        """Anchor a fixed-size glyph at a physical plane's centre and angle."""
+
+        start = _scene_point(endpoints[0])
+        end = _scene_point(endpoints[1])
+        item.setPos((start + end) / 2.0)
+        item.setRotation(
+            math.degrees(
+                math.atan2(
+                    end.y() - start.y(),
+                    end.x() - start.x(),
+                )
+            )
+        )
 
     def _set_dimension(
         self,
@@ -440,8 +519,17 @@ class OpticsGraphicsScene(QGraphicsScene):
 
     @staticmethod
     def _line_intersects_rect(line: QLineF, rect: QRectF) -> bool:
-        if rect.contains(line.p1()) or rect.contains(line.p2()):
+        first = line.p1()
+        second = line.p2()
+        if rect.contains(first) or rect.contains(second):
             return True
+        if (
+            max(first.x(), second.x()) < rect.left()
+            or min(first.x(), second.x()) > rect.right()
+            or max(first.y(), second.y()) < rect.top()
+            or min(first.y(), second.y()) > rect.bottom()
+        ):
+            return False
         edges = (
             QLineF(rect.topLeft(), rect.topRight()),
             QLineF(rect.topRight(), rect.bottomRight()),
@@ -567,7 +655,6 @@ class OpticsGraphicsScene(QGraphicsScene):
     ) -> QRectF:
         """Return the first clean preferred slot, scoring only fallback slots."""
 
-        fallback: tuple[float, QRectF] | None = None
         for candidate in candidates:
             collides = any(candidate.intersects(other) for other in placed)
             crosses = any(
@@ -576,6 +663,9 @@ class OpticsGraphicsScene(QGraphicsScene):
             )
             if viewport_rect.contains(candidate) and not collides and not crosses:
                 return candidate
+
+        fallback: tuple[float, QRectF] | None = None
+        for candidate in candidates:
             score = self._callout_score(
                 candidate,
                 anchor=anchor,
@@ -1108,6 +1198,8 @@ class OpticsGraphicsScene(QGraphicsScene):
         self._position(self.emitter_marker, snapshot.emitter)
         self._position(self.lens_marker, snapshot.lens_center)
         self._position(self.image_marker, snapshot.image_center)
+        self._position_screen_plane(self.lens_plane_marker, snapshot.lens_endpoints)
+        self._position_screen_plane(self.sensor_plane_marker, snapshot.sensor_endpoints)
 
         self.invalid_overlay.setRect(scene_rect)
         self.invalid_overlay.setVisible(not snapshot.valid)
@@ -1130,6 +1222,8 @@ class OpticsGraphicsScene(QGraphicsScene):
             self.lens_line,
             self.optical_axis_line,
             self.sensor_line,
+            self.lens_plane_marker,
+            self.sensor_plane_marker,
             self.proxy_sensor_line,
             self.near_ray_before,
             self.near_ray_after,
@@ -1138,13 +1232,14 @@ class OpticsGraphicsScene(QGraphicsScene):
         ):
             original = item.pen()
             if invalid_style:
-                item.setPen(
-                    QPen(
-                        self.COLORS["invalid"],
-                        original.widthF(),
-                        Qt.PenStyle.DashLine,
-                    )
+                invalid_pen = QPen(
+                    self.COLORS["invalid"],
+                    original.widthF(),
+                    Qt.PenStyle.DashLine,
                 )
+                invalid_pen.setCosmetic(True)
+                invalid_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                item.setPen(invalid_pen)
             else:
                 item.setPen(QPen(self._normal_pens[item]))
         self._prepare_snapshot_callouts(

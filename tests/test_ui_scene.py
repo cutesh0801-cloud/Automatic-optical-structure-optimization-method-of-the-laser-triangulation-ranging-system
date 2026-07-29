@@ -4,7 +4,7 @@ import math
 from dataclasses import replace
 from time import perf_counter
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 
 from scheimpflug_optimeter.ui.scene import (
     OpticsGraphicsScene,
@@ -205,6 +205,9 @@ def test_invalid_scene_is_red_dashed_and_stale_scene_can_be_hidden(qtbot):
     assert "센서 범위" in scene.labels["invalid"].text()
     assert scene.sensor_line.pen().color() == scene.COLORS["invalid"]
     assert scene.sensor_line.pen().style() == Qt.PenStyle.DashLine
+    assert scene.sensor_line.pen().isCosmetic()
+    assert scene.sensor_plane_marker.pen().color() == scene.COLORS["invalid"]
+    assert scene.sensor_plane_marker.pen().isCosmetic()
 
     scene.set_snapshot(snapshot(valid=True))
     assert not scene.invalid_overlay.isVisible()
@@ -221,6 +224,59 @@ def test_callouts_avoid_collisions_and_key_lines_in_two_representative_scenes(qt
     for value in (snapshot(), workbook_snapshot()):
         scene, view = fitted_scene(qtbot, value)
         assert_callouts_do_not_cover_each_other_or_key_lines(scene, view)
+
+
+def test_clean_callout_candidate_does_not_run_unused_fallback_scoring(monkeypatch):
+    scene = OpticsGraphicsScene()
+    first = QRectF(20.0, 20.0, 40.0, 18.0)
+    second = QRectF(70.0, 20.0, 40.0, 18.0)
+    calls = []
+
+    def score(candidate, **_):
+        calls.append(candidate)
+        return 0.0 if candidate == second else 1.0
+
+    monkeypatch.setattr(scene, "_callout_score", score)
+    selected = scene._select_callout_rect(
+        (first, second),
+        anchor=QPointF(0.0, 0.0),
+        viewport_rect=QRectF(0.0, 0.0, 200.0, 100.0),
+        placed=[],
+        obstacles=(),
+    )
+    assert selected == first
+    assert calls == []
+
+    selected = scene._select_callout_rect(
+        (first, second),
+        anchor=QPointF(0.0, 0.0),
+        viewport_rect=QRectF(0.0, 0.0, 10.0, 10.0),
+        placed=[],
+        obstacles=(),
+    )
+    assert selected == second
+    assert calls == [first, second]
+
+
+def test_line_rectangle_broad_phase_preserves_intersection_results():
+    rect = QRectF(10.0, 10.0, 20.0, 20.0)
+
+    assert OpticsGraphicsScene._line_intersects_rect(
+        QLineF(0.0, 20.0, 40.0, 20.0),
+        rect,
+    )
+    assert OpticsGraphicsScene._line_intersects_rect(
+        QLineF(20.0, 0.0, 20.0, 40.0),
+        rect,
+    )
+    assert OpticsGraphicsScene._line_intersects_rect(
+        QLineF(0.0, 0.0, 10.0, 10.0),
+        rect,
+    )
+    assert not OpticsGraphicsScene._line_intersects_rect(
+        QLineF(-40.0, -30.0, -10.0, -5.0),
+        rect,
+    )
 
 
 def test_remote_geometry_is_ray_clipped_without_expanding_the_scene(qtbot):
@@ -248,6 +304,45 @@ def test_remote_geometry_is_ray_clipped_without_expanding_the_scene(qtbot):
     assert not scene.scheimpflug_remote_arrow.isVisible()
     assert scene.scheimpflug_marker.pos().x() == pytest_approx(local_intersection.x_mm)
     assert scene.scheimpflug_marker.pos().y() == pytest_approx(-local_intersection.z_mm)
+
+
+def test_zoomed_out_key_geometry_keeps_minimum_screen_presence(qtbot):
+    scene, view = fitted_scene(qtbot, snapshot())
+    physical_lines = {
+        "laser": QLineF(scene.laser_line.line()),
+        "lens": QLineF(scene.lens_line.line()),
+        "sensor": QLineF(scene.sensor_line.line()),
+    }
+
+    view.resetTransform()
+    view.scale(0.02, 0.02)
+    scene.relayout_labels()
+
+    def device_line_length(item):
+        transform = item.deviceTransform(view.viewportTransform())
+        return QLineF(
+            transform.map(item.line().p1()),
+            transform.map(item.line().p2()),
+        ).length()
+
+    for item in (scene.laser_line, scene.lens_line, scene.sensor_line):
+        assert item.pen().isCosmetic()
+    assert device_line_length(scene.lens_line) < 1.0
+    assert device_line_length(scene.sensor_line) < 1.0
+    assert device_line_length(scene.lens_plane_marker) == pytest_approx(20.0)
+    assert device_line_length(scene.sensor_plane_marker) == pytest_approx(24.0)
+
+    emitter_transform = scene.emitter_marker.deviceTransform(view.viewportTransform())
+    emitter_rect = emitter_transform.mapRect(scene.emitter_marker.rect())
+    assert emitter_rect.width() == pytest_approx(10.0)
+    assert emitter_rect.height() == pytest_approx(10.0)
+    assert scene.near_ray_before.zValue() < scene.laser_line.zValue()
+    assert scene.laser_line.zValue() < scene.lens_line.zValue()
+    assert scene.lens_line.zValue() < scene.sensor_line.zValue()
+    assert scene.sensor_line.zValue() < scene.sensor_plane_marker.zValue()
+    assert scene.laser_line.line() == physical_lines["laser"]
+    assert scene.lens_line.line() == physical_lines["lens"]
+    assert scene.sensor_line.line() == physical_lines["sensor"]
 
 
 def test_equal_scale_minimum_size_and_scroll_relayout(qtbot):
