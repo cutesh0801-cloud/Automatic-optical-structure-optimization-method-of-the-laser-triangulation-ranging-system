@@ -38,6 +38,7 @@ jobs:
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "publish=$publish" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Output "Release tag: $tag; publish: $publish"
+          exit 0
       - name: Install locked environment
         if: steps.release.outputs.publish == 'true'
         run: |
