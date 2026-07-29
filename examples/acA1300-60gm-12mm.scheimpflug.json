@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "project_name": "구조설계 워크북 · acA1300-60gm 예제",
+  "project_name": "구조설계 워크북 · acA1300-60gm 센서 규격 예제",
   "design_input": {
     "mode": "workbook",
     "sensor_axis": "height",
@@ -14,7 +14,6 @@
     "lens_id": "edmund-33-879"
   },
   "selected_optimization": null,
-  "calibration_ref": null,
   "ui_state": {
     "active_tab": 0,
     "design_splitter_sizes": [

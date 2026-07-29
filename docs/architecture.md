@@ -1,30 +1,36 @@
 # Architecture
 
-Scheimpflug OptiMeter is a Windows-first PySide6 desktop application with a
-small, importable numerical core. The UI never owns optical formulas.
+Scheimpflug OptiMeter is a Windows-first PySide6 calculation and visualization
+application with a small, importable numerical core. The UI never owns or
+duplicates optical formulas.
 
 ```text
 PySide6 UI
   ├─ workbook/CSV input ── workbook solver ── live 2D scene
-  ├─ project JSON
-  ├─ advanced canonical design / scene geometry ── SciPy optimizers
-  ├─ camera backend ── Mock | lazy pypylon
-  └─ stripe extraction ── calibration ── triangulation
+  ├─ static sensor/lens profiles ── compatibility warnings
+  ├─ canonical design ── SciPy/M-PSO optimizers
+  ├─ calculated geometry ── 3D Scheimpflug scene
+  └─ versioned project JSON + CSV/SVG/PNG export
 ```
 
-The workbook/CSV path is the product's primary path. Paper-derived canonical
-optimization, 3D, calibration, and measurement modules are isolated
-advanced/reference functions; they do not replace or silently alter workbook
-inputs or results.
+The workbook/CSV path is the primary product path. Paper-derived canonical
+optimization and 3D relations are comparison tools; they never replace or
+silently alter workbook inputs or results.
+
+There is no device-I/O boundary. The application does not enumerate or connect
+cameras, acquire frames, calibrate a physical system, detect a laser stripe, or
+produce measured profiles. Camera model names in the catalog identify static
+sensor specifications only.
 
 ## Boundaries
 
 - Domain objects are immutable, slotted dataclasses with units in field names.
 - Core calculations are deterministic pure functions.
-- Qt signals connect the UI and worker threads; there is no application event bus.
-- Camera access is the only optional hardware boundary.
-- Projects and calibrations use versioned JSON; there is no database.
-- A project stores authoritative inputs. Derived optical values are recomputed on load.
+- A single calculated result object feeds the numeric table and visualizations.
+- Qt signals connect widgets directly; there is no application event bus.
+- Projects use versioned JSON; there is no database.
+- Projects store authoritative inputs. Derived optical values are recomputed on load.
+- Static catalog data never initiates hardware access.
 
 ## Coordinate system
 
@@ -36,8 +42,8 @@ In workbook mode, the target reference is `(0,0)`, the laser emitter is
 `s` endpoint is clipped at the view boundary with its full numeric value shown,
 so it cannot shrink the optical head to an unreadable size.
 
-The advanced canonical view uses `+Z` along laser propagation and `+X` toward
-the receiver. Its laser exit is `E=(0,0)` and nominal target is `T0=(0,d)`.
+The canonical view uses `+Z` along laser propagation and `+X` toward the
+receiver. Its laser exit is `E=(0,0)` and nominal target is `T0=(0,d)`.
 
 The live drawing includes the laser line, near/nominal/far targets, working
 distance, lens plane, receiver axis, image plane, exact sensor segment, chief
@@ -45,7 +51,8 @@ rays, Scheimpflug intersection, and the `W/R` mechanical envelope.
 
 ## Threading
 
-- Small design calculations and scene updates run in the GUI thread.
-- Optimization and camera acquisition run in workers.
-- Camera preview keeps only the latest frame and is rate-limited to 30 fps.
-- A missing pylon runtime disables only the Basler backend.
+- Workbook calculations and 2D scene updates run in the GUI thread after a
+  16 ms debounce.
+- SciPy and M-PSO optimization run in a cancellable worker thread.
+- Inactive 3D rendering is deferred.
+- No acquisition or device worker exists.

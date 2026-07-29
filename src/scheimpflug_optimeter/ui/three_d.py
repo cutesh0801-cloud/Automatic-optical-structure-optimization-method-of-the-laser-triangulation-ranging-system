@@ -253,7 +253,7 @@ class ThreeDWidget(QWidget):
 
         # Hinge line lies in the lens plane and is separately styled.  In this
         # section model it is drawn through the lens center and annotated, while
-        # calibrated 3-D geometry can later provide an as-built offset.
+        # A physical assembly model can later provide an as-built offset.
         hinge_y = np.array([-plane_size, plane_size])
         self.axes.plot(
             np.full(2, snapshot.lens_center.x_mm),

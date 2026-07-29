@@ -61,6 +61,8 @@ class OpticalCoreFacade:
         return self.import_error is None
 
     def cameras(self) -> tuple[Any, ...]:
+        """Return static camera/sensor specifications used by the simulation."""
+
         if not self.ready:
             return ()
         catalog = getattr(self.hardware, "CAMERAS", ())
@@ -73,7 +75,7 @@ class OpticalCoreFacade:
         return tuple(catalog.values()) if isinstance(catalog, Mapping) else tuple(catalog)
 
     def camera_sensor_length_mm(self, camera_id: str, sensor_axis: str) -> float:
-        """Return a catalog length only when the user explicitly requests it."""
+        """Return a static catalog length only when the user explicitly requests it."""
 
         if not self.ready:
             raise CoreUnavailableError("하드웨어 카탈로그를 사용할 수 없습니다.")
@@ -271,7 +273,14 @@ class DesignInputPanel(QWidget):
             " mm",
             decimals=6,
         )
-        self.load_sensor_length_button = QPushButton("카메라 축 길이 불러오기")
+        self.load_sensor_length_button = QPushButton("선택 프로파일 L 불러오기")
+        self.camera.setToolTip(
+            "광학 시뮬레이션에 사용할 센서 치수 프리셋입니다. "
+            "카메라를 검색하거나 연결하지 않습니다."
+        )
+        self.load_sensor_length_button.setToolTip(
+            "선택한 정적 센서 규격의 폭 또는 높이를 L 입력으로 복사합니다."
+        )
         self.sensor_length_container = QWidget()
         sensor_length_layout = QHBoxLayout(self.sensor_length_container)
         sensor_length_layout.setContentsMargins(0, 0, 0, 0)
@@ -284,7 +293,7 @@ class DesignInputPanel(QWidget):
         self.wavelength_nm = self._spin(200.0, 2_000.0, 650.0, " nm", decimals=1)
 
         form.addRow("계산 모드", self.mode)
-        form.addRow("카메라", self.camera)
+        form.addRow("센서 규격 프로파일", self.camera)
         form.addRow("Edmund M12 렌즈", self.lens)
         form.addRow("센서 사용 방향", self.sensor_axis)
         form.addRow("워크북 V", self.v_mm)
@@ -349,7 +358,7 @@ class DesignInputPanel(QWidget):
                 camera.id,
             )
         if not self.camera.count():
-            self.camera.addItem("카메라 카탈로그 로드 실패", "")
+            self.camera.addItem("센서 규격 카탈로그 로드 실패", "")
             self.camera.setEnabled(False)
 
         self.lens.clear()
@@ -380,7 +389,8 @@ class DesignInputPanel(QWidget):
             self.mode_help.setText(
                 "기본 흐름: 구조설계_rev.1.xlsx/CSV의 V, d, L, α를 입력하면 "
                 "β, b, W, R, lo, fp, s, f와 2D 구조가 즉시 계산됩니다. "
-                "L 직접 입력값이 계산의 권위값입니다."
+                "L 직접 입력값이 계산의 권위값입니다. 센서 프로파일은 치수 "
+                "프리셋일 뿐 실제 장치를 연결하지 않습니다."
             )
         else:
             self.mode_help.setText(

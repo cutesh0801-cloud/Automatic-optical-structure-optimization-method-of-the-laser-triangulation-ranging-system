@@ -22,14 +22,10 @@ from scheimpflug_optimeter.project import (
     PROJECT_SUFFIX,
     ProjectDocument,
     ProjectError,
-    calibration_reference,
-    file_sha256,
     load_project,
     save_project,
 )
 
-from .calibration_tab import CalibrationMeasurementWidget
-from .camera_tab import CameraPreviewWidget
 from .design import DesignWidget
 from .three_d import ThreeDWidget
 
@@ -53,7 +49,7 @@ _DEFAULT_HARDWARE = {
 
 
 class MainWindow(QMainWindow):
-    """Korean-first desktop shell for design, 3-D view, and acquisition."""
+    """Korean-first desktop shell for optical simulation and visualization."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -70,12 +66,8 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.design = DesignWidget()
         self.three_d = ThreeDWidget()
-        self.camera = CameraPreviewWidget()
-        self.calibration = CalibrationMeasurementWidget()
         self.tabs.addTab(self.design, "워크북 계산 · 실시간 2D")
-        self.tabs.addTab(self.three_d, "고급/연구 참고 · 3D")
-        self.tabs.addTab(self.camera, "고급/장비 · 카메라")
-        self.tabs.addTab(self.calibration, "고급/장비 · 보정/측정")
+        self.tabs.addTab(self.three_d, "3D Scheimpflug 시각화")
         self.setCentralWidget(self.tabs)
 
         self._create_actions()
@@ -88,9 +80,6 @@ class MainWindow(QMainWindow):
         self.design.input_panel.changed.connect(self._mark_dirty)
         self.design.export_png_button.clicked.connect(self.export_png)
         self.design.export_svg_button.clicked.connect(self.export_svg)
-        self.camera.frame_ready.connect(self.calibration.set_camera_frame)
-        self.calibration.calibration_ready.connect(self._mark_dirty)
-        self.calibration.status_changed.connect(self.status_label.setText)
         self.tabs.currentChanged.connect(self._mark_dirty)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self._restore_window_state()
@@ -251,18 +240,11 @@ class MainWindow(QMainWindow):
             "camera_id": values["camera_id"],
             "lens_id": values["lens_id"],
         }
-        calibration_ref = None
-        if self._project_path is not None and self.calibration.calibration_path is not None:
-            calibration_ref = calibration_reference(
-                self.calibration.calibration_path,
-                project_directory=self._project_path.parent,
-            )
         return ProjectDocument(
             project_name=self._project_name,
             design_input=design_input,
             hardware=hardware,
             selected_optimization=self.design.selected_optimization,
-            calibration_ref=calibration_ref,
             ui_state={
                 "active_tab": self.tabs.currentIndex(),
                 "design_splitter_sizes": self.design.splitter.sizes(),
@@ -276,22 +258,6 @@ class MainWindow(QMainWindow):
             values.update(document.hardware)
             self.design.apply_project_input(values)
             self.design.selected_optimization = document.selected_optimization
-            self.calibration.reset_calibration()
-            if source is not None and document.calibration_ref is not None:
-                relative_path = document.calibration_ref.get("relative_path")
-                expected_digest = document.calibration_ref.get("sha256")
-                if not isinstance(relative_path, str) or not isinstance(
-                    expected_digest,
-                    str,
-                ):
-                    raise ProjectError("보정 파일 참조에 경로 또는 SHA-256이 없습니다.")
-                calibration_path = (source.parent / relative_path).resolve()
-                if file_sha256(calibration_path) != expected_digest.lower():
-                    raise ProjectError("보정 파일 SHA-256이 프로젝트 기록과 다릅니다.")
-                try:
-                    self.calibration.load_calibration(calibration_path)
-                except (OSError, ValueError, json.JSONDecodeError) as exc:
-                    raise ProjectError(f"보정 파일을 불러오지 못했습니다: {exc}") from exc
             sizes = document.ui_state.get("design_splitter_sizes")
             if (
                 isinstance(sizes, list)
@@ -557,7 +523,8 @@ class MainWindow(QMainWindow):
             self,
             "Scheimpflug OptiMeter",
             "<b>Scheimpflug OptiMeter 0.1.0</b><br>"
-            "레이저 삼각측량 광학 설계·시각화·단일 프레임 측정 도구<br><br>"
+            "워크북/CSV 기반 Scheimpflug 수치 계산·2D/3D 시각화 도구<br>"
+            "장치 연결이나 영상 측정 기능은 포함하지 않습니다.<br><br>"
             "Python 3.12 · PySide6 · Apache-2.0",
         )
 
@@ -565,7 +532,6 @@ class MainWindow(QMainWindow):
         if not self.maybe_save_changes():
             event.ignore()
             return
-        self.camera.shutdown()
         self.design.shutdown()
         self._settings.setValue("window/geometry", self.saveGeometry())
         self._settings.setValue("window/state", self.saveState())

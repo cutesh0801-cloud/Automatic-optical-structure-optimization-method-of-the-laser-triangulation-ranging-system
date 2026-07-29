@@ -8,9 +8,11 @@ uv run ruff check .
 uv run pytest
 ```
 
-Do not add source papers, workbooks, captures, local calibration files, camera
-serial numbers, or proprietary manufacturer drawings. New catalog entries
-must cite an official product page and leave unverified fields empty.
+Do not add source papers, workbooks, proprietary manufacturer drawings, or
+device-specific runtime code. Camera names in this project are static sensor
+specification identifiers; device connection, acquisition, calibration and
+measurement workflows are out of scope. New catalog entries must cite an
+official product page and leave unverified fields empty.
 
 Changes to a formula require:
 

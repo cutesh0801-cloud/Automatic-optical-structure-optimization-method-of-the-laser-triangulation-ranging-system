@@ -66,13 +66,6 @@ the exact segment is generally asymmetric about the nominal image point. The
 application draws this exact segment solid and the paper's centred packaging
 proxy dashed.
 
-## Thick-lens calibration
-
-The calibrated imaging matrix is assembled from the paper's component
-matrices as `K_f = B @ A`. The expanded printed form is not hard-coded.
-Principal-plane separation, two-axis sensor tilt, laser-plane parameters, and
-the camera pose are stored with calibration residuals.
-
 ## Three-dimensional full focus
 
 For object tilts `α, β`, magnification `m`, and sensor tilts `γ, δ`:

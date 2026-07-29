@@ -3,11 +3,23 @@ from __future__ import annotations
 import csv
 
 import pytest
-from PySide6.QtCore import Qt
 
 from scheimpflug_optimeter.project import ProjectDocument, ProjectError
-from scheimpflug_optimeter.ui.camera_tab import CameraPreviewWidget
 from scheimpflug_optimeter.ui.main_window import MainWindow
+
+
+def test_main_window_is_simulation_only(qtbot):
+    window = MainWindow()
+    window.maybe_save_changes = lambda: True
+    qtbot.addWidget(window)
+
+    assert window.tabs.count() == 2
+    assert [window.tabs.tabText(index) for index in range(window.tabs.count())] == [
+        "워크북 계산 · 실시간 2D",
+        "3D Scheimpflug 시각화",
+    ]
+    assert not hasattr(window, "camera")
+    assert not hasattr(window, "calibration")
 
 
 def test_main_window_live_design_and_project_recalculation(qtbot):
@@ -87,7 +99,7 @@ def test_workbook_is_default_and_direct_l_reproduces_both_regression_cases(qtbot
     assert not window.design.input_panel.sensor_length_container.isHidden()
     assert "고급/연구 참고" in window.design.input_panel.mode.itemText(1)
     assert window.tabs.tabText(0) == "워크북 계산 · 실시간 2D"
-    assert "고급/연구 참고" in window.tabs.tabText(1)
+    assert window.tabs.tabText(1) == "3D Scheimpflug 시각화"
     assert window.design.scene.sceneRect().height() < 500.0
     assert "레이저 교차 거리 s" in window.design.scene.labels["range"].text()
     assert "화면 밖" in window.design.scene.labels["range"].text()
@@ -228,19 +240,3 @@ def test_inactive_advanced_3d_defers_matplotlib_draw(qtbot, monkeypatch):
     assert window.three_d._snapshot is window.design.snapshot
     window.tabs.setCurrentWidget(window.three_d)
     assert draws == [window.design.snapshot]
-
-
-def test_mock_camera_single_frame_has_live_stripe_overlay(qtbot):
-    preview = CameraPreviewWidget()
-    qtbot.addWidget(preview)
-    preview.roi_width.setValue(160)
-    preview.roi_height.setValue(120)
-
-    qtbot.mouseClick(preview.connect_button, Qt.MouseButton.LeftButton)
-    assert preview._backend is not None
-    qtbot.mouseClick(preview.trigger_button, Qt.MouseButton.LeftButton)
-
-    assert preview.preview.pixmap() is not None
-    assert not preview.preview.pixmap().isNull()
-    assert preview._last_frame_id == 1
-    preview.shutdown()

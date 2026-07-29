@@ -19,3 +19,14 @@ No source PDF or spreadsheet is distributed in this repository.
 The workbook-derived regression fixtures contain only numeric inputs,
 formula identifiers, and expected values. All diagrams are rendered from
 application geometry rather than copied from the publications.
+
+Implementation scope:
+
+- The workbook/CSV equations are authoritative for the default calculation.
+- The 2022 paper supports interpretation of the optical geometry and the
+  optional optimization comparison.
+- The 2025 three-dimensional paper supports the optional 3D full-focus
+  relationships.
+- The 2024 thick-lens and 2025 atmospheric-observation papers provide
+  background context only. Their acquisition, calibration and observation
+  systems are not implemented.

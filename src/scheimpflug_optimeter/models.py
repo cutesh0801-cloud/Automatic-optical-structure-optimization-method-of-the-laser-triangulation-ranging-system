@@ -48,15 +48,6 @@ class Point2D:
 
 
 @dataclass(frozen=True, slots=True)
-class Point3D:
-    """Three-dimensional point used by downstream calibration code."""
-
-    x_mm: float
-    y_mm: float
-    z_mm: float
-
-
-@dataclass(frozen=True, slots=True)
 class SensorProfile:
     """Active sensor dimensions and sampling."""
 
@@ -380,45 +371,3 @@ class OptimizationResult:
     @property
     def best(self) -> OptimizationCandidate | None:
         return self.candidates[0] if self.candidates else None
-
-
-@dataclass(frozen=True, slots=True)
-class CalibrationRecord:
-    """Stable calibration identity and numerical payload.
-
-    The calibration subsystem owns creation and validation; the domain type is
-    kept here so project I/O and measurement can share one immutable contract.
-    """
-
-    schema_version: int
-    camera_serial: str
-    camera_model: str
-    lens_id: str
-    roi_px: tuple[int, int, int, int]
-    resolution_px: tuple[int, int]
-    sensor_axis: str
-    camera_matrix: tuple[tuple[float, float, float], ...]
-    distortion: tuple[float, ...]
-    laser_plane: tuple[float, float, float, float]
-    rms_px: float
-    thick_lens_parameters: tuple[tuple[str, float], ...] = ()
-    quality_metrics: tuple[tuple[str, float], ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class StripeResult:
-    """Sub-pixel laser stripe extraction output."""
-
-    positions_px: tuple[float, ...]
-    confidence: tuple[float, ...]
-    valid: tuple[bool, ...]
-    axis: str = "columns"
-
-
-@dataclass(frozen=True, slots=True)
-class CrossSection:
-    """Measured single-frame cross-section."""
-
-    points_mm: tuple[Point3D, ...]
-    confidence: tuple[float, ...]
-    valid: tuple[bool, ...]

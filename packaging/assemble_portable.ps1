@@ -25,13 +25,6 @@ if ($forbiddenDocuments) {
     throw "Portable bundle contains forbidden source-document types:$([Environment]::NewLine)$forbiddenPaths"
 }
 
-$pypylonFiles = Get-ChildItem -LiteralPath $applicationPath -Recurse -File |
-    Where-Object { $_.Name -match "pypylon" }
-if ($pypylonFiles) {
-    $pypylonPaths = ($pypylonFiles.FullName -join [Environment]::NewLine)
-    throw "Standard portable bundle unexpectedly contains pypylon:$([Environment]::NewLine)$pypylonPaths"
-}
-
 Compress-Archive -LiteralPath $applicationPath -DestinationPath $archivePath -Force
 $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $checksumPath = "$archivePath.sha256"

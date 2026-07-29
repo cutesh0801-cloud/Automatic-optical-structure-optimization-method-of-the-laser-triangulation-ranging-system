@@ -8,7 +8,6 @@ from scheimpflug_optimeter.project import (
     PROJECT_SUFFIX,
     ProjectDocument,
     ProjectError,
-    calibration_reference,
     load_project,
     normalize_project_path,
     save_project,
@@ -93,31 +92,33 @@ def test_unsupported_or_non_integer_schema_is_rejected(version):
         )
 
 
-def test_project_rejects_nan_and_bad_calibration_hash():
+def test_project_rejects_nan():
     with pytest.raises(ProjectError, match="JSON"):
         ProjectDocument(project_name="nan", design_input={"d_mm": float("nan")})
-    with pytest.raises(ProjectError, match="SHA-256"):
-        ProjectDocument(
-            project_name="hash",
-            calibration_ref={"relative_path": "cal.json", "sha256": "not-a-digest"},
-        )
 
 
-def test_calibration_reference_is_relative_and_integrity_bound(tmp_path):
-    calibration = tmp_path / "calibration" / "aca.json"
-    calibration.parent.mkdir()
-    calibration.write_bytes(b'{"schema_version": 1}\n')
-
-    reference = calibration_reference(
-        calibration,
-        project_directory=tmp_path,
+def test_loading_ignores_legacy_calibration_reference(tmp_path):
+    path = tmp_path / f"legacy{PROJECT_SUFFIX}"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_name": "legacy",
+                "design_input": {"d_mm": 200.0},
+                "hardware": {},
+                "calibration_ref": {
+                    "relative_path": "obsolete.json",
+                    "sha256": "not-used",
+                },
+            }
+        ),
+        encoding="utf-8",
     )
 
-    assert reference["relative_path"] == "calibration/aca.json"
-    assert len(reference["sha256"]) == 64
-    assert reference["sha256"] == (
-        "48e4ce397017e1389eff57a56b84e8a6f8d7eb58a94f893acaa49d55e7718176"
-    )
+    loaded = load_project(path)
+
+    assert not hasattr(loaded, "calibration_ref")
+    assert "calibration_ref" not in loaded.to_dict()
 
 
 @pytest.mark.parametrize(

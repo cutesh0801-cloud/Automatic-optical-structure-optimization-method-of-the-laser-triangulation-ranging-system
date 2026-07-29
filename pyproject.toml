@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scheimpflug-optimeter"
 version = "0.1.0"
-description = "Scheimpflug laser-triangulation optical design, visualization, calibration, and measurement desktop application."
+description = "Scheimpflug optical calculation and real-time visualization desktop application."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "Apache-2.0" }
@@ -13,13 +13,11 @@ authors = [{ name = "Scheimpflug OptiMeter contributors" }]
 dependencies = [
   "matplotlib>=3.9,<4",
   "numpy>=2.0,<3",
-  "opencv-python-headless>=4.10,<5",
   "PySide6>=6.8,<7",
   "scipy>=1.14,<2",
 ]
 
 [project.optional-dependencies]
-camera = ["pypylon>=4.1,<5"]
 dev = [
   "pyinstaller>=6.11,<7",
   "pytest>=8.3,<9",

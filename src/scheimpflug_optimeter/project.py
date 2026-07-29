@@ -13,7 +13,6 @@ import tempfile
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -69,7 +68,6 @@ class ProjectDocument:
     design_input: dict[str, Any] = field(default_factory=default_workbook_design_input)
     hardware: dict[str, Any] = field(default_factory=default_hardware)
     selected_optimization: dict[str, Any] | None = None
-    calibration_ref: dict[str, Any] | None = None
     ui_state: dict[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
@@ -94,16 +92,6 @@ class ProjectDocument:
                 "selected_optimization",
                 _json_object(self.selected_optimization),
             )
-        if self.calibration_ref is not None:
-            reference = _json_object(self.calibration_ref)
-            digest = reference.get("sha256")
-            if digest is not None and (
-                not isinstance(digest, str)
-                or len(digest) != 64
-                or any(character not in "0123456789abcdefABCDEF" for character in digest)
-            ):
-                raise ProjectError("보정 파일 SHA-256 값의 형식이 잘못되었습니다.")
-            object.__setattr__(self, "calibration_ref", reference)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the stable wire representation."""
@@ -116,7 +104,6 @@ class ProjectDocument:
             "design_input": document["design_input"],
             "hardware": document["hardware"],
             "selected_optimization": document["selected_optimization"],
-            "calibration_ref": document["calibration_ref"],
             "ui_state": document["ui_state"],
         }
 
@@ -156,7 +143,6 @@ class ProjectDocument:
             design_input=mapping_or_empty("design_input"),
             hardware=mapping_or_empty("hardware"),
             selected_optimization=optional_mapping("selected_optimization"),
-            calibration_ref=optional_mapping("calibration_ref"),
             ui_state=mapping_or_empty("ui_state"),
         )
 
@@ -224,41 +210,3 @@ def load_project(path: str | Path) -> ProjectDocument:
             f"프로젝트 JSON 형식이 잘못되었습니다 ({exc.lineno}:{exc.colno})."
         ) from exc
     return ProjectDocument.from_dict(raw)
-
-
-def file_sha256(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
-    """Calculate a lowercase SHA-256 digest without loading a file at once."""
-
-    source = Path(path)
-    digest = sha256()
-    try:
-        with source.open("rb") as stream:
-            while chunk := stream.read(chunk_size):
-                digest.update(chunk)
-    except OSError as exc:
-        raise ProjectError(f"파일 해시를 계산하지 못했습니다: {exc}") from exc
-    return digest.hexdigest()
-
-
-def calibration_reference(
-    calibration_path: str | Path,
-    *,
-    project_directory: str | Path,
-) -> dict[str, str]:
-    """Create a relative, integrity-bound calibration reference."""
-
-    calibration = Path(calibration_path).expanduser().resolve()
-    base = Path(project_directory).expanduser().resolve()
-    try:
-        relative = calibration.relative_to(base)
-    except ValueError:
-        try:
-            relative = Path(os.path.relpath(calibration, base))
-        except ValueError as exc:
-            raise ProjectError(
-                "보정 파일은 프로젝트와 같은 Windows 드라이브에 있어야 합니다."
-            ) from exc
-    return {
-        "relative_path": relative.as_posix(),
-        "sha256": file_sha256(calibration),
-    }
