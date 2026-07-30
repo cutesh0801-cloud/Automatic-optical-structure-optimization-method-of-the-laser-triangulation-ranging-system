@@ -331,7 +331,11 @@ class DesignInputPanel(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+        # Keep the title, short guidance and complete formula card in the
+        # initial 720 px-high viewport even when Windows font metrics are a
+        # few pixels taller.  Four pixels still separates each worksheet
+        # section without spending eight pixels twice above the formula card.
+        layout.setSpacing(4)
 
         self.title = QLabel("Workbook 광학 설계 시트")
         self.title.setObjectName("panelTitle")

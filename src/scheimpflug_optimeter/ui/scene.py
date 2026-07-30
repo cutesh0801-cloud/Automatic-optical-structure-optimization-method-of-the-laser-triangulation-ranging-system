@@ -798,7 +798,7 @@ class OpticsGraphicsScene(QGraphicsScene):
         }
         order = tuple(dict.fromkeys((*preferred, *directions)))
         candidates: list[QRectF] = []
-        for ring in range(1, 9):
+        for ring in range(1, 17):
             gap = 10.0 + (ring - 1) * 14.0
             for direction in order:
                 horizontal, vertical = directions[direction]
@@ -915,7 +915,31 @@ class OpticsGraphicsScene(QGraphicsScene):
     ) -> QRectF:
         """Return the first clean preferred slot, scoring only fallback slots."""
 
+        viewport_candidates: list[QRectF] = []
         for candidate in candidates:
+            viewport_candidates.append(candidate)
+            if (
+                candidate.width() > viewport_rect.width()
+                or candidate.height() > viewport_rect.height()
+            ):
+                continue
+            clamped = QRectF(candidate)
+            clamped.moveLeft(
+                min(
+                    max(candidate.left(), viewport_rect.left()),
+                    viewport_rect.right() - candidate.width(),
+                )
+            )
+            clamped.moveTop(
+                min(
+                    max(candidate.top(), viewport_rect.top()),
+                    viewport_rect.bottom() - candidate.height(),
+                )
+            )
+            if clamped != candidate:
+                viewport_candidates.append(clamped)
+
+        for candidate in viewport_candidates:
             collides = any(candidate.intersects(other) for other in placed)
             crosses = any(
                 self._line_intersects_rect(line, candidate.adjusted(-3, -3, 3, 3))
@@ -925,7 +949,7 @@ class OpticsGraphicsScene(QGraphicsScene):
                 return candidate
 
         fallback: tuple[float, QRectF] | None = None
-        for candidate in candidates:
+        for candidate in viewport_candidates:
             score = self._callout_score(
                 candidate,
                 anchor=anchor,
