@@ -309,8 +309,10 @@ def solve_workbook_design(
     """Reproduce the thin-lens formulas in ``구조설계_rev.1.xlsx``.
 
     The compatibility solver intentionally keeps the workbook convention
-    ``beta = 90° - alpha`` and its centred sensor package.  Missing or zero
-    sensor length is rejected instead of silently propagating ``L = 0``.
+    ``beta = 90° - alpha`` and its centred sensor package.  When ``alpha`` is
+    omitted, the low-angle root is solved from the workbook focal-length
+    relation.  Missing or zero sensor length is rejected instead of silently
+    propagating ``L = 0``.
     """
 
     _require_finite_positive("v_mm", request.v_mm)
@@ -320,7 +322,6 @@ def solve_workbook_design(
             "sensor_length_mm is required; the workbook source cell for L is missing."
         )
     _require_finite_positive("sensor_length_mm", request.sensor_length_mm)
-    _require_finite("alpha_deg", request.alpha_deg)
     for name, value in (
         ("focal_length_literal_mm", request.focal_length_literal_mm),
         ("rm_cmos_distance_mm", request.rm_cmos_distance_mm),
@@ -330,11 +331,22 @@ def solve_workbook_design(
             _require_finite_positive(name, value)
     if request.alpha_reference_deg is not None:
         _require_finite("alpha_reference_deg", request.alpha_reference_deg)
-    if not 0.0 < request.alpha_deg < 90.0:
+
+    alpha_auto_solved = request.alpha_deg is None
+    if alpha_auto_solved:
+        if request.focal_length_literal_mm is None:
+            raise OpticalInputError(
+                "alpha_deg or focal_length_literal_mm is required for workbook design."
+            )
+        alpha_deg = solve_alpha(request.focal_length_literal_mm, request.v_mm)
+    else:
+        _require_finite("alpha_deg", request.alpha_deg)
+        alpha_deg = request.alpha_deg
+    if not 0.0 < alpha_deg < 90.0:
         raise OpticalInputError("alpha_deg must be between 0 and 90 degrees.")
 
-    alpha = math.radians(request.alpha_deg)
-    beta_deg = 90.0 - request.alpha_deg
+    alpha = math.radians(alpha_deg)
+    beta_deg = 90.0 - alpha_deg
     beta = math.radians(beta_deg)
     baseline = request.v_mm * math.tan(alpha)
     half_sensor = request.sensor_length_mm / 2.0
@@ -345,7 +357,7 @@ def solve_workbook_design(
     total = fp + lo
 
     violations: list[ConstraintViolation] = []
-    if request.alpha_deg >= _MAX_LOW_ROOT_DEG:
+    if alpha_deg >= _MAX_LOW_ROOT_DEG:
         violations.append(
             ConstraintViolation(
                 "alpha_low_root_domain",
@@ -353,7 +365,7 @@ def solve_workbook_design(
                     "alpha_deg is outside the workbook's low-root domain "
                     f"(0, {_MAX_LOW_ROOT_DEG:.12f} degrees)."
                 ),
-                amount=request.alpha_deg,
+                amount=alpha_deg,
                 limit=_MAX_LOW_ROOT_DEG,
             )
         )
@@ -417,6 +429,7 @@ def solve_workbook_design(
         ("fp_tan_beta_mm", fp * math.tan(beta)),
         ("sensor_edge_denominator_mm", denominator),
         ("max_low_root_deg", _MAX_LOW_ROOT_DEG),
+        ("alpha_auto_solved", 1.0 if alpha_auto_solved else 0.0),
     ]
     if request.focal_length_literal_mm is not None:
         literal_focal = request.focal_length_literal_mm
@@ -431,34 +444,39 @@ def solve_workbook_design(
                 ("alpha_equation_residual_at_input", alpha_equation_residual),
             )
         )
-        try:
-            solved_alpha_deg = solve_alpha(literal_focal, request.v_mm)
-        except OpticalInputError:
-            solved_alpha_deg = math.nan
+        if alpha_auto_solved:
+            solved_alpha_deg = alpha_deg
+        else:
+            try:
+                solved_alpha_deg = solve_alpha(literal_focal, request.v_mm)
+            except OpticalInputError:
+                solved_alpha_deg = math.nan
         diagnostics.append(("alpha_solved_deg", solved_alpha_deg))
-        if math.isfinite(solved_alpha_deg):
-            diagnostics.append(
-                ("alpha_input_minus_solved_deg", request.alpha_deg - solved_alpha_deg)
-            )
+        if not alpha_auto_solved and math.isfinite(solved_alpha_deg):
+            diagnostics.append(("alpha_input_minus_solved_deg", alpha_deg - solved_alpha_deg))
     if request.alpha_reference_deg is not None:
         reference_alpha = math.radians(request.alpha_reference_deg)
-        diagnostics.extend(
+        diagnostics.append(("alpha_reference_deg", request.alpha_reference_deg))
+        diagnostics.append(
             (
-                ("alpha_reference_deg", request.alpha_reference_deg),
                 (
-                    "alpha_input_minus_reference_deg",
-                    request.alpha_deg - request.alpha_reference_deg,
+                    "alpha_solved_minus_reference_deg"
+                    if alpha_auto_solved
+                    else "alpha_input_minus_reference_deg"
                 ),
+                alpha_deg - request.alpha_reference_deg,
+            )
+        )
+        diagnostics.append(
+            (
+                "alpha_equation_residual_at_reference",
                 (
-                    "alpha_equation_residual_at_reference",
-                    (
-                        math.sin(reference_alpha) ** 2 * math.cos(reference_alpha)
-                        - (
-                            request.focal_length_literal_mm / request.v_mm
-                            if request.focal_length_literal_mm is not None
-                            else math.nan
-                        )
-                    ),
+                    math.sin(reference_alpha) ** 2 * math.cos(reference_alpha)
+                    - (
+                        request.focal_length_literal_mm / request.v_mm
+                        if request.focal_length_literal_mm is not None
+                        else math.nan
+                    )
                 ),
             )
         )
@@ -471,7 +489,7 @@ def solve_workbook_design(
     sensor_metrics = calculate_sensor_imaging_metrics(
         selected_sensor,
         sensor_axis=request.sensor_axis,
-        alpha_deg=request.alpha_deg,
+        alpha_deg=alpha_deg,
         beta_deg=beta_deg,
         lo_mm=lo,
         fp_mm=fp,
@@ -494,7 +512,7 @@ def solve_workbook_design(
         request=request,
         valid=not violations,
         focal_length_mm=focal,
-        alpha_deg=request.alpha_deg,
+        alpha_deg=alpha_deg,
         beta_deg=beta_deg,
         lo_mm=lo,
         fp_mm=fp,

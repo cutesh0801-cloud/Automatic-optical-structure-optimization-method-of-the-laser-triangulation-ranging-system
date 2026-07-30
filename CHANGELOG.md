@@ -9,6 +9,20 @@ updates. Every completed routine fix, refinement, or small feature is released
 as a new append-only maintenance build while the application version remains
 unchanged.
 
+- Rebuilt the Workbook input sheet around the original editable and derived
+  cells, with Korean names, equation variables, units and compact source-aware
+  formulas.
+- Corrected the Workbook geometry so the CMOS plane remains perpendicular to
+  the laser axis, `β=90°−α` stays a derived complement, and the lens housing is
+  placed backward from its verified `S1→H` datum without inventing an absolute
+  `H′` position.
+- Added project-local user lens presets with create, official-profile clone,
+  edit and delete flows for optical values, M12 mechanics, `S1→H` and
+  `SL→H′`; incomplete mechanics remain usable for calculation but cannot
+  masquerade as a verified physical 3D model.
+- Made preset and project loading atomic, validated every stored user lens
+  before selection, preserved manual focal overrides during partial CSV
+  imports and migrated older schema-v1 projects deterministically.
 - Removed the unsupported 3D laser-plane extrusion; the workbook model now
   remains a single laser irradiation line in both 2D and 3D.
 - Removed the unmapped `γ/δ` readout, a duplicate ideal-focus plane and an

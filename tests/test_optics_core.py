@@ -63,6 +63,46 @@ def test_workbook_a_s1_golden_vector_and_diagnostics():
     assert solution.ray_intercept_s_mm == pytest.approx(1165.9442466162743, rel=1e-12)
     assert solution.diagnostic("scheimpflug_residual_mm") == pytest.approx(0.0, abs=1e-12)
     assert solution.diagnostic("right_triangle_residual_mm2") == pytest.approx(0.0, abs=1e-10)
+    assert solution.diagnostic("alpha_auto_solved") == 0.0
+
+
+def test_workbook_can_solve_alpha_from_the_focal_literal_and_v():
+    request = WorkbookDesignInput(
+        v_mm=150.0,
+        d_mm=100.0,
+        sensor_length_mm=3.0,
+        alpha_deg=None,
+        focal_length_literal_mm=17.5,
+    )
+
+    solution = solve_workbook_design(request)
+
+    assert request.alpha_deg is None
+    assert solution.valid
+    assert solution.alpha_deg == pytest.approx(20.6788609312, abs=1e-10)
+    assert solution.beta_deg == pytest.approx(69.3211390688, abs=1e-10)
+    assert solution.beta_deg == pytest.approx(90.0 - solution.alpha_deg, abs=1e-12)
+    assert solution.baseline_mm == pytest.approx(56.620, abs=0.005)
+    assert solution.lo_mm == pytest.approx(140.335, abs=0.005)
+    assert solution.fp_mm == pytest.approx(19.995, abs=0.005)
+    assert solution.total_optical_length_mm == pytest.approx(160.331, abs=0.005)
+    assert solution.focal_length_mm == pytest.approx(17.5, abs=1e-12)
+    assert solution.diagnostic("alpha_auto_solved") == 1.0
+    assert solution.diagnostic("alpha_solved_deg") == pytest.approx(solution.alpha_deg)
+
+
+def test_workbook_requires_alpha_or_a_focal_literal():
+    with pytest.raises(
+        OpticalInputError,
+        match="alpha_deg or focal_length_literal_mm is required",
+    ):
+        solve_workbook_design(
+            WorkbookDesignInput(
+                v_mm=150.0,
+                d_mm=100.0,
+                sensor_length_mm=3.0,
+            )
+        )
 
 
 def test_workbook_a_s1_scene_coordinates_and_invariants():
@@ -77,6 +117,13 @@ def test_workbook_a_s1_scene_coordinates_and_invariants():
     assert scene.lens_center.z_mm == pytest.approx(192.54458733415268)
     assert scene.sensor_near.x_mm == pytest.approx(54.858448275433375)
     assert scene.sensor_far.x_mm == pytest.approx(49.42064827543338)
+    assert scene.sensor_near.z_mm == pytest.approx(205.0)
+    assert scene.sensor_far.z_mm == pytest.approx(205.0)
+    assert scene.image_plane == (scene.sensor_near, scene.sensor_far)
+    assert solution.beta_deg == pytest.approx(90.0 - solution.alpha_deg)
+    assert scene.object_principal_plane == scene.lens_center
+    assert scene.image_principal_plane == scene.lens_center
+    assert scene.principal_planes_coincident
     assert scene.ray_intercept == Point2D(0.0, pytest.approx(-1165.9442466162743))
     assert scene.target_center.distance_to(scene.lens_center) == pytest.approx(solution.lo_mm)
     assert scene.lens_center.distance_to(scene.image_center) == pytest.approx(solution.fp_mm)
@@ -86,6 +133,24 @@ def test_workbook_a_s1_scene_coordinates_and_invariants():
     assert scene.target_far == scene.ray_intercept
     assert scene.target_far.z_mm == pytest.approx(-solution.ray_intercept_s_mm)
     assert scene.target_near.z_mm > scene.target_center.z_mm
+    optical_axis = (
+        scene.image_center.x_mm - scene.target_center.x_mm,
+        scene.image_center.z_mm - scene.target_center.z_mm,
+    )
+    lens_plane = (
+        scene.lens_plane[1].x_mm - scene.lens_plane[0].x_mm,
+        scene.lens_plane[1].z_mm - scene.lens_plane[0].z_mm,
+    )
+    assert optical_axis[0] * lens_plane[0] + optical_axis[1] * lens_plane[1] == pytest.approx(
+        0.0, abs=1e-10
+    )
+    lens_to_emitter = (
+        scene.emitter.x_mm - scene.lens_center.x_mm,
+        scene.emitter.z_mm - scene.lens_center.z_mm,
+    )
+    assert lens_plane[0] * lens_to_emitter[1] - lens_plane[1] * lens_to_emitter[0] == pytest.approx(
+        0.0, abs=1e-10
+    )
     for target, sensor in (
         (scene.target_near, scene.sensor_near),
         (scene.target_far, scene.sensor_far),

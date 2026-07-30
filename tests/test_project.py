@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
+from scheimpflug_optimeter.hardware.catalog import LENSES
+from scheimpflug_optimeter.lens_presets import (
+    UserLensPreset,
+    lens_presets_from_dict,
+    lens_presets_to_dict,
+)
 from scheimpflug_optimeter.project import (
     PROJECT_SUFFIX,
     ProjectDocument,
@@ -43,18 +50,64 @@ def test_project_round_trip_keeps_only_authoritative_values(tmp_path):
     assert "design_solution" not in raw
 
 
+def test_selected_user_lens_round_trip_is_detached_from_official_catalog(tmp_path):
+    official = LENSES["edmund-58-206"]
+    catalog_before = tuple(LENSES.items())
+    preset = replace(
+        UserLensPreset.from_lens_profile(
+            official,
+            user_id="line-a-175",
+            name="Line A 17.5 mm",
+        ),
+        focal_length_mm=18.25,
+        object_principal_plane_from_first_object_surface_mm=6.0,
+    )
+    document = ProjectDocument(
+        project_name="User lens round trip",
+        design_input={
+            "mode": "workbook",
+            "focal_length_literal_mm": preset.focal_length_mm,
+            "user_lens_presets": lens_presets_to_dict((preset,)),
+        },
+        hardware={
+            "camera_id": "basler-aca1300-60gm",
+            "lens_id": preset.runtime_lens_id,
+        },
+    )
+
+    loaded = load_project(save_project(tmp_path / "user-lens", document))
+    loaded_presets = lens_presets_from_dict(loaded.design_input["user_lens_presets"])
+    runtime = loaded_presets[0].to_lens_profile()
+
+    assert loaded == document
+    assert loaded.hardware["lens_id"] == "user-lens:line-a-175"
+    assert loaded_presets == (preset,)
+    assert runtime.id == loaded.hardware["lens_id"]
+    assert runtime.focal_length_mm == pytest.approx(18.25)
+    assert runtime is not official
+    assert tuple(LENSES.items()) == catalog_before
+    assert LENSES[official.id] is official
+    assert runtime.id not in LENSES
+
+
 def test_new_project_defaults_to_authoritative_workbook_inputs():
     document = ProjectDocument()
 
     assert document.design_input == {
         "mode": "workbook",
         "sensor_axis": "height",
-        "v_mm": 205.0,
+        "v_mm": 150.0,
         "d_mm": 100.0,
         "sensor_length_mm": 5.4378,
-        "alpha_deg": 14.27,
+        "sensor_length_linked": True,
+        "focal_length_literal_mm": 17.5,
+        "focal_length_linked": True,
+        "alpha_manual": False,
+        "alpha_deg": None,
+        "user_lens_presets": {"schema_version": 1, "presets": []},
     }
     assert document.hardware["camera_id"] == "basler-aca1300-60gm"
+    assert document.hardware["lens_id"] == "edmund-58-206"
 
 
 def test_loading_ignores_stale_derived_values(tmp_path):

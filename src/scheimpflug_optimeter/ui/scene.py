@@ -30,6 +30,51 @@ class Point2D:
 
 
 @dataclass(frozen=True, slots=True)
+class LensMechanicalSnapshot:
+    """External lens dimensions with an explicit provenance boundary."""
+
+    lens_id: str
+    sku: str
+    drawing_id: str | None
+    overall_length_mm: float
+    outer_diameter_mm: float
+    front_housing_length_mm: float
+    threaded_section_length_mm: float
+    thread_major_diameter_mm: float
+    first_surface_recess_mm: float
+    object_principal_from_first_surface_mm: float
+    image_principal_from_last_surface_mm: float | None = None
+    source_url: str | None = None
+    supplier_verified: bool = False
+
+    @property
+    def front_housing_to_object_principal_mm(self) -> float:
+        """Return F0→H along the object-to-image optical-axis direction."""
+
+        return self.first_surface_recess_mm + self.object_principal_from_first_surface_mm
+
+
+@dataclass(frozen=True, slots=True)
+class LensBodySection:
+    """Calculated external lens locations anchored to the thin-model H point."""
+
+    front_housing: Point2D
+    first_object_surface: Point2D
+    housing_step: Point2D
+    rear_housing: Point2D
+    object_principal_plane: Point2D
+    axis_x: float
+    axis_z: float
+
+    @property
+    def center(self) -> Point2D:
+        return Point2D(
+            (self.front_housing.x_mm + self.rear_housing.x_mm) / 2.0,
+            (self.front_housing.z_mm + self.rear_housing.z_mm) / 2.0,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SceneSnapshot:
     """All geometry needed by the 2-D view; the scene never solves optics."""
 
@@ -61,6 +106,60 @@ class SceneSnapshot:
     valid: bool = True
     warnings: tuple[str, ...] = field(default_factory=tuple)
     workbook_mode: bool = False
+    alpha_deg: float | None = None
+    beta_deg: float | None = None
+    baseline_mm: float | None = None
+    v_mm: float | None = None
+    object_principal_plane: Point2D | None = None
+    image_principal_plane: Point2D | None = None
+    principal_planes_coincident: bool = False
+    lens_mechanics: LensMechanicalSnapshot | None = None
+
+
+def build_lens_body_section(snapshot: SceneSnapshot) -> LensBodySection | None:
+    """Back-calculate the verified housing position from H and the EO datum.
+
+    ``lo`` terminates at H.  The supplier gives the first optical-surface
+    recess from the front housing and the signed S1→H distance, so the body
+    front is determined without guessing an H′ housing reference.
+    """
+
+    mechanics = snapshot.lens_mechanics
+    principal = snapshot.object_principal_plane
+    if mechanics is None or principal is None:
+        return None
+    dx = snapshot.image_center.x_mm - principal.x_mm
+    dz = snapshot.image_center.z_mm - principal.z_mm
+    length = math.hypot(dx, dz)
+    if length <= 1e-12:
+        return None
+    axis_x, axis_z = dx / length, dz / length
+
+    def shifted(origin: Point2D, distance_mm: float) -> Point2D:
+        return Point2D(
+            origin.x_mm + axis_x * distance_mm,
+            origin.z_mm + axis_z * distance_mm,
+        )
+
+    front = shifted(
+        principal,
+        -mechanics.front_housing_to_object_principal_mm,
+    )
+    return LensBodySection(
+        front_housing=front,
+        first_object_surface=shifted(
+            front,
+            mechanics.first_surface_recess_mm,
+        ),
+        housing_step=shifted(
+            front,
+            mechanics.front_housing_length_mm,
+        ),
+        rear_housing=shifted(front, mechanics.overall_length_mm),
+        object_principal_plane=principal,
+        axis_x=axis_x,
+        axis_z=axis_z,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +219,8 @@ class OpticsGraphicsScene(QGraphicsScene):
         "lens": QColor("#65b7ff"),
         "axis": QColor("#aab7c4"),
         "sensor": QColor("#ffd166"),
+        "principal_h": QColor("#35d07f"),
+        "principal_h_prime": QColor("#18a867"),
         "proxy": QColor("#ff9f43"),
         "ray": QColor("#be95ff"),
         "dimension": QColor("#64d8cb"),
@@ -160,6 +261,18 @@ class OpticsGraphicsScene(QGraphicsScene):
         self.scheimpflug_marker = self._marker("warning", 4.5)
         self.lens_plane_marker = self._screen_plane_marker("lens", 10.0, 5.2)
         self.sensor_plane_marker = self._screen_plane_marker("sensor", 12.0, 5.4)
+        self.principal_h_marker = self._screen_plane_marker("principal_h", 8.0, 2.0)
+        self.principal_h_prime_marker = self._screen_plane_marker(
+            "principal_h_prime",
+            11.0,
+            1.5,
+        )
+        principal_h_pen = self.principal_h_marker.pen()
+        principal_h_pen.setStyle(Qt.PenStyle.DashLine)
+        self.principal_h_marker.setPen(principal_h_pen)
+        principal_h_prime_pen = self.principal_h_prime_marker.pen()
+        principal_h_prime_pen.setStyle(Qt.PenStyle.DotLine)
+        self.principal_h_prime_marker.setPen(principal_h_prime_pen)
         self.laser_emitter_glyph = self._schematic_glyph(
             "laser",
             (
@@ -174,14 +287,14 @@ class OpticsGraphicsScene(QGraphicsScene):
         self.lens_glyph = self._schematic_glyph(
             "lens",
             (
-                (-12.0, 0.0),
-                (-9.0, -4.0),
-                (0.0, -6.0),
-                (9.0, -4.0),
-                (12.0, 0.0),
-                (9.0, 4.0),
-                (0.0, 6.0),
-                (-9.0, 4.0),
+                (-13.0, -10.0),
+                (-3.5, -10.0),
+                (-3.5, -7.0),
+                (13.0, -7.0),
+                (13.0, 7.0),
+                (-3.5, 7.0),
+                (-3.5, 10.0),
+                (-13.0, 10.0),
             ),
         )
         self.camera_body_glyph = self._schematic_glyph(
@@ -196,7 +309,7 @@ class OpticsGraphicsScene(QGraphicsScene):
             ),
         )
         self.laser_emitter_glyph.setToolTip("레이저 발광기 개념 표시 · 실제 외형 치수가 아닙니다.")
-        self.lens_glyph.setToolTip("렌즈 개념 표시 · 실제 외형 치수가 아닙니다.")
+        self.lens_glyph.setToolTip("렌즈 외형 표시")
         self.camera_body_glyph.setToolTip("카메라 본체 개념 표시 · 실제 외형 치수가 아닙니다.")
         self.optical_axis_line.setToolTip("수광 광축")
         self.target_near_line.setToolTip("요청 범위의 근거리 대상 위치")
@@ -272,6 +385,8 @@ class OpticsGraphicsScene(QGraphicsScene):
             item.setZValue(30.0)
         self.lens_plane_marker.setZValue(31.0)
         self.sensor_plane_marker.setZValue(32.0)
+        self.principal_h_marker.setZValue(33.0)
+        self.principal_h_prime_marker.setZValue(33.0)
         self.laser_emitter_glyph.setZValue(19.0)
         self.camera_body_glyph.setZValue(16.0)
         self.lens_glyph.setZValue(23.0)
@@ -290,6 +405,8 @@ class OpticsGraphicsScene(QGraphicsScene):
                 self.sensor_line,
                 self.lens_plane_marker,
                 self.sensor_plane_marker,
+                self.principal_h_marker,
+                self.principal_h_prime_marker,
                 self.proxy_sensor_line,
                 self.near_ray_before,
                 self.near_ray_after,
@@ -429,6 +546,24 @@ class OpticsGraphicsScene(QGraphicsScene):
                     end.x() - start.x(),
                 )
             )
+        )
+
+    @staticmethod
+    def _plane_at(
+        center: Point2D,
+        reference: tuple[Point2D, Point2D],
+    ) -> tuple[Point2D, Point2D] | None:
+        """Translate a reference plane direction to a different centre."""
+
+        dx = reference[1].x_mm - reference[0].x_mm
+        dz = reference[1].z_mm - reference[0].z_mm
+        length = math.hypot(dx, dz)
+        if length <= 1e-12:
+            return None
+        ux, uz = dx / length, dz / length
+        return (
+            Point2D(center.x_mm - ux, center.z_mm - uz),
+            Point2D(center.x_mm + ux, center.z_mm + uz),
         )
 
     @staticmethod
@@ -663,7 +798,7 @@ class OpticsGraphicsScene(QGraphicsScene):
         }
         order = tuple(dict.fromkeys((*preferred, *directions)))
         candidates: list[QRectF] = []
-        for ring in range(1, 9):
+        for ring in range(1, 17):
             gap = 10.0 + (ring - 1) * 14.0
             for direction in order:
                 horizontal, vertical = directions[direction]
@@ -718,6 +853,8 @@ class OpticsGraphicsScene(QGraphicsScene):
             self.camera_body_glyph,
             self.lens_plane_marker,
             self.sensor_plane_marker,
+            self.principal_h_marker,
+            self.principal_h_prime_marker,
             self.range_remote_arrow,
             self.scheimpflug_remote_arrow,
         )
@@ -778,7 +915,31 @@ class OpticsGraphicsScene(QGraphicsScene):
     ) -> QRectF:
         """Return the first clean preferred slot, scoring only fallback slots."""
 
+        viewport_candidates: list[QRectF] = []
         for candidate in candidates:
+            viewport_candidates.append(candidate)
+            if (
+                candidate.width() > viewport_rect.width()
+                or candidate.height() > viewport_rect.height()
+            ):
+                continue
+            clamped = QRectF(candidate)
+            clamped.moveLeft(
+                min(
+                    max(candidate.left(), viewport_rect.left()),
+                    viewport_rect.right() - candidate.width(),
+                )
+            )
+            clamped.moveTop(
+                min(
+                    max(candidate.top(), viewport_rect.top()),
+                    viewport_rect.bottom() - candidate.height(),
+                )
+            )
+            if clamped != candidate:
+                viewport_candidates.append(clamped)
+
+        for candidate in viewport_candidates:
             collides = any(candidate.intersects(other) for other in placed)
             crosses = any(
                 self._line_intersects_rect(line, candidate.adjusted(-3, -3, 3, 3))
@@ -788,7 +949,7 @@ class OpticsGraphicsScene(QGraphicsScene):
                 return candidate
 
         fallback: tuple[float, QRectF] | None = None
-        for candidate in candidates:
+        for candidate in viewport_candidates:
             score = self._callout_score(
                 candidate,
                 anchor=anchor,
@@ -899,14 +1060,35 @@ class OpticsGraphicsScene(QGraphicsScene):
         }
         for name, color in label_colors.items():
             self.labels[name].setBrush(self.COLORS[color])
+        angle_text = ""
+        if snapshot.alpha_deg is not None and snapshot.beta_deg is not None:
+            angle_text = f"\nα={snapshot.alpha_deg:.3f}° · β={snapshot.beta_deg:.3f}°"
+        if snapshot.object_principal_plane is None or snapshot.image_principal_plane is None:
+            principal_text = "주평면 데이터 없음"
+        elif snapshot.principal_planes_coincident:
+            principal_text = "H = H′ · 얇은 렌즈"
+        else:
+            principal_text = "H / H′ 주평면"
+        mechanics = snapshot.lens_mechanics
+        mechanics_text = ""
+        if mechanics is not None:
+            mechanics_text = (
+                f"\n#{mechanics.sku} 외형 "
+                f"Ø{mechanics.outer_diameter_mm:g}×"
+                f"{mechanics.overall_length_mm:g} mm"
+            )
         self._queue_callout(
             "lens",
-            "렌즈 평면",
+            (
+                f"렌즈 평면 · 물리 렌즈 · {principal_text}\n"
+                f"lo={snapshot.lo_mm:.3f} · fp={snapshot.fp_mm:.3f} mm"
+                f"{angle_text}{mechanics_text}"
+            ),
             snapshot.lens_center,
             preferred=("nw", "sw", "ne", "se"),
         )
         sensor_text = (
-            "입력 이미지/센서 구간 L" if snapshot.workbook_mode else "요청 범위의 설계 결상 구간"
+            "CMOS · 입력 이미지 구간 L" if snapshot.workbook_mode else "요청 범위의 설계 결상 구간"
         )
         self._queue_callout(
             "sensor",
@@ -914,14 +1096,34 @@ class OpticsGraphicsScene(QGraphicsScene):
             snapshot.image_center,
             preferred=("ne", "se", "nw", "sw"),
         )
-        self.labels["lens"].setToolTip(
+        lens_tooltip = (
             "렌즈 평면의 정확한 mm 좌표 위에 고정 크기 개념 표시를 겹쳐 표시합니다.\n"
             f"물체 거리 lo = {snapshot.lo_mm:.3f} mm\n"
             f"이미지 거리 fp = {snapshot.fp_mm:.3f} mm\n"
             f"초점거리 f = {snapshot.focal_length_mm:.3f} mm"
         )
+        if mechanics is not None:
+            mechanics_source = (
+                f"#{mechanics.sku} · {mechanics.drawing_id or '공식 공급사 도면'}"
+                if mechanics.supplier_verified
+                else f"사용자 프리셋 {mechanics.sku} · 공급사 검증 아님"
+            )
+            lens_tooltip += (
+                f"\n{mechanics_source}"
+                f"\n전면 하우징→H = "
+                f"{mechanics.front_housing_to_object_principal_mm:.3f} mm"
+                "\nH′ 공급사 값은 마지막 광학면 기준이며 "
+                "외부 하우징 절대좌표로 추정하지 않습니다."
+            )
+        self.labels["lens"].setToolTip(lens_tooltip)
         self.labels["sensor"].setToolTip(
-            f"{sensor_text}\n카메라 외곽은 식별용 개념 표시이며 실제 치수가 아닙니다."
+            f"{sensor_text}\n"
+            + (
+                "β는 α에서 유도되는 직각삼각형의 보각이며 CMOS 틸트 입력이 아닙니다.\n"
+                if snapshot.workbook_mode
+                else ""
+            )
+            + "카메라 외곽은 식별용 개념 표시이며 실제 치수가 아닙니다."
         )
 
         if snapshot.scheimpflug_point is not None:
@@ -971,9 +1173,16 @@ class OpticsGraphicsScene(QGraphicsScene):
                 )
 
         wd_text = (
-            f"워크북 WD 파라미터 d = {snapshot.working_distance_mm:.3f} mm"
-            if snapshot.workbook_mode
-            else f"WD d = {snapshot.working_distance_mm:.3f} mm"
+            (
+                f"기준 거리 V = {snapshot.v_mm:.3f} mm\n"
+                f"워킹 디스턴스 d = {snapshot.working_distance_mm:.3f} mm"
+            )
+            if snapshot.workbook_mode and snapshot.v_mm is not None
+            else (
+                f"워크북 WD 파라미터 d = {snapshot.working_distance_mm:.3f} mm"
+                if snapshot.workbook_mode
+                else f"WD d = {snapshot.working_distance_mm:.3f} mm"
+            )
         )
         self.labels["wd"].setToolTip(
             "워크북 외곽식 R=V−d에 사용하는 입력 파라미터입니다."
@@ -1024,9 +1233,13 @@ class OpticsGraphicsScene(QGraphicsScene):
             preferred=range_preferred,
         )
         width_text = (
-            f"W=b+L/2 · {snapshot.w_mm:.3f} mm"
-            if snapshot.workbook_mode
-            else f"광학 외곽 W · {snapshot.w_mm:.3f} mm"
+            (f"b = {snapshot.baseline_mm:.3f} mm\nW=b+L/2 = {snapshot.w_mm:.3f} mm")
+            if snapshot.workbook_mode and snapshot.baseline_mm is not None
+            else (
+                f"W=b+L/2 · {snapshot.w_mm:.3f} mm"
+                if snapshot.workbook_mode
+                else f"광학 외곽 W · {snapshot.w_mm:.3f} mm"
+            )
         )
         self._queue_callout(
             "w",
@@ -1287,17 +1500,90 @@ class OpticsGraphicsScene(QGraphicsScene):
         self._position(self.image_marker, snapshot.image_center)
         self._position_screen_plane(self.lens_plane_marker, snapshot.lens_endpoints)
         self._position_screen_plane(self.sensor_plane_marker, snapshot.sensor_endpoints)
+        principal_h = snapshot.object_principal_plane
+        principal_h_prime = snapshot.image_principal_plane
+        principal_reference_valid = (
+            self._plane_at(snapshot.lens_center, snapshot.lens_endpoints) is not None
+        )
+        h_visible = principal_h is not None and principal_reference_valid
+        h_prime_visible = (
+            principal_h_prime is not None
+            and principal_reference_valid
+            and not snapshot.principal_planes_coincident
+        )
+        self.principal_h_marker.setVisible(h_visible)
+        self.principal_h_prime_marker.setVisible(h_prime_visible)
+        if h_visible:
+            h_plane = self._plane_at(principal_h, snapshot.lens_endpoints)
+            assert h_plane is not None
+            self._position_screen_plane(self.principal_h_marker, h_plane)
+            self.principal_h_marker.setToolTip(
+                "주평면 H = H′ · 얇은 렌즈 모델"
+                if snapshot.principal_planes_coincident
+                else "물체측 주평면 H"
+            )
+        if h_prime_visible:
+            h_prime_plane = self._plane_at(principal_h_prime, snapshot.lens_endpoints)
+            assert h_prime_plane is not None
+            self._position_screen_plane(self.principal_h_prime_marker, h_prime_plane)
+            self.principal_h_prime_marker.setToolTip("상측 주평면 H′")
         self._position_oriented_glyph(
             self.laser_emitter_glyph,
             snapshot.emitter,
             snapshot.laser_endpoints[1],
         )
-        self._position_screen_plane(self.lens_glyph, snapshot.lens_endpoints)
-        self._position_oriented_glyph(
-            self.camera_body_glyph,
-            snapshot.image_center,
-            snapshot.lens_center,
-        )
+        lens_body = build_lens_body_section(snapshot)
+        if lens_body is None:
+            self._position_oriented_glyph(
+                self.lens_glyph,
+                snapshot.lens_center,
+                snapshot.image_center,
+            )
+            self.lens_glyph.setToolTip("렌즈 개념 표시 · 검증된 외형/주평면 datum이 없습니다.")
+        else:
+            self._position_oriented_glyph(
+                self.lens_glyph,
+                lens_body.center,
+                lens_body.rear_housing,
+            )
+            mechanics = snapshot.lens_mechanics
+            assert mechanics is not None
+            mechanics_source = (
+                f"Edmund #{mechanics.sku} 외부 하우징 · "
+                f"{mechanics.drawing_id or '공식 공급사 도면'}"
+                if mechanics.supplier_verified
+                else f"사용자 입력 외형 {mechanics.sku} · 공급사 검증 아님"
+            )
+            self.lens_glyph.setToolTip(
+                f"{mechanics_source}\n"
+                f"Ø{mechanics.outer_diameter_mm:g} mm · "
+                f"L={mechanics.overall_length_mm:g} mm\n"
+                f"전면 하우징→H="
+                f"{mechanics.front_housing_to_object_principal_mm:.3f} mm로 "
+                "계산 위치를 역산했습니다.\n"
+                "화면에서 식별 가능한 고정 픽셀 크기로 강조하며, "
+                "중심 좌표와 방향은 계산값입니다."
+            )
+        sensor_dx = snapshot.sensor_endpoints[1].x_mm - snapshot.sensor_endpoints[0].x_mm
+        sensor_dz = snapshot.sensor_endpoints[1].z_mm - snapshot.sensor_endpoints[0].z_mm
+        sensor_length = math.hypot(sensor_dx, sensor_dz)
+        if sensor_length > 1e-12:
+            normal_x, normal_z = -sensor_dz / sensor_length, sensor_dx / sensor_length
+            rear_x = snapshot.image_center.x_mm - snapshot.lens_center.x_mm
+            rear_z = snapshot.image_center.z_mm - snapshot.lens_center.z_mm
+            if normal_x * rear_x + normal_z * rear_z < 0.0:
+                normal_x, normal_z = -normal_x, -normal_z
+            camera_back = Point2D(
+                snapshot.image_center.x_mm + normal_x,
+                snapshot.image_center.z_mm + normal_z,
+            )
+            self._position_oriented_glyph(
+                self.camera_body_glyph,
+                snapshot.image_center,
+                camera_back,
+            )
+        else:
+            self.camera_body_glyph.setVisible(False)
 
         self.invalid_overlay.setRect(scene_rect)
         self.invalid_overlay.setVisible(not snapshot.valid)
@@ -1322,6 +1608,8 @@ class OpticsGraphicsScene(QGraphicsScene):
             self.sensor_line,
             self.lens_plane_marker,
             self.sensor_plane_marker,
+            self.principal_h_marker,
+            self.principal_h_prime_marker,
             self.proxy_sensor_line,
             self.near_ray_before,
             self.near_ray_after,
@@ -1444,6 +1732,8 @@ class OpticsGraphicsView(QGraphicsView):
 
     def __init__(self, scene: OpticsGraphicsScene, parent=None) -> None:
         super().__init__(scene, parent)
+        self._fit_mode: str | None = "full"
+        self._applying_fit = False
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate)
@@ -1452,33 +1742,54 @@ class OpticsGraphicsView(QGraphicsView):
         self.setMinimumSize(400, 360)
 
     def fit_scene(self) -> None:
+        self._fit_mode = "full"
+        self._apply_fit_mode()
+
+    def _apply_fit_mode(self) -> None:
+        if self._applying_fit:
+            return
         scene = self.scene()
-        if scene is not None and not scene.sceneRect().isEmpty():
-            self.fitInView(scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        if scene is None or scene.sceneRect().isEmpty() or self._fit_mode is None:
+            return
+        self._applying_fit = True
+        try:
+            target = (
+                scene.optical_head_rect()
+                if self._fit_mode == "head" and isinstance(scene, OpticsGraphicsScene)
+                else scene.sceneRect()
+            )
+            self.fitInView(target, Qt.AspectRatioMode.KeepAspectRatio)
             if isinstance(scene, OpticsGraphicsScene):
                 scene.relayout_labels()
+        finally:
+            self._applying_fit = False
 
     def fit_optical_head(self) -> None:
-        scene = self.scene()
-        if isinstance(scene, OpticsGraphicsScene):
-            self.fitInView(
-                scene.optical_head_rect(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-            )
-            scene.relayout_labels()
+        self._fit_mode = "head"
+        self._apply_fit_mode()
 
     def wheelEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._fit_mode = None
         factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
         self.scale(factor, factor)
         scene = self.scene()
         if isinstance(scene, OpticsGraphicsScene):
             scene.relayout_labels()
 
+    def scale(self, sx: float, sy: float) -> None:
+        if not self._applying_fit:
+            self._fit_mode = None
+        super().scale(sx, sy)
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().resizeEvent(event)
-        scene = self.scene()
-        if isinstance(scene, OpticsGraphicsScene):
-            scene.relayout_labels()
+        if hasattr(self, "_fit_mode"):
+            self._apply_fit_mode()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._fit_mode = None
+        super().mousePressEvent(event)
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:  # noqa: N802 - Qt override
         super().scrollContentsBy(dx, dy)
