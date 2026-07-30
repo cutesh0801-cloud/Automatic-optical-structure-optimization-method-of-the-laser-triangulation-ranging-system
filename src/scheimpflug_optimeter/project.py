@@ -21,24 +21,29 @@ PROJECT_SUFFIX = ".scheimpflug.json"
 
 
 def default_workbook_design_input() -> dict[str, Any]:
-    """Return a detached workbook-first input set matching the primary fixture."""
+    """Return the workbook's 17.5 mm / 150 mm reference as editable input."""
 
     return {
         "mode": "workbook",
         "sensor_axis": "height",
-        "v_mm": 205.0,
+        "v_mm": 150.0,
         "d_mm": 100.0,
         "sensor_length_mm": 5.4378,
-        "alpha_deg": 14.27,
+        "sensor_length_linked": True,
+        "focal_length_literal_mm": 17.5,
+        "focal_length_linked": True,
+        "alpha_manual": False,
+        "alpha_deg": None,
+        "user_lens_presets": {"schema_version": 1, "presets": []},
     }
 
 
 def default_hardware() -> dict[str, Any]:
-    """Return the workbook sensor's matching camera and optional research lens."""
+    """Return the workbook camera and the lens identified by DWG 58206."""
 
     return {
         "camera_id": "basler-aca1300-60gm",
-        "lens_id": "edmund-33-879",
+        "lens_id": "edmund-58-206",
     }
 
 

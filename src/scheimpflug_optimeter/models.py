@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from math import hypot
+from math import hypot, isfinite
 from typing import Any, Literal
 
 
@@ -137,12 +137,66 @@ class LensProfile:
     resolution_lp_per_mm: float | None = None
     source_url: str | None = None
     verified_on: str | None = None
+    # The fields below deliberately retain the datum stated by the supplier.
+    # In particular, a principal-plane coordinate is *not* an enclosure or
+    # sensor coordinate: it is meaningful only together with its named
+    # optical-surface reference.
+    aperture_f_number: float | None = None
+    front_housing_length_mm: float | None = None
+    threaded_section_length_mm: float | None = None
+    thread_major_diameter_mm: float | None = None
+    thread_pitch_mm: float | None = None
+    thread_tolerance_class: str | None = None
+    first_object_surface_recess_from_front_housing_mm: float | None = None
+    object_principal_plane_from_first_object_surface_mm: float | None = None
+    image_principal_plane_from_last_image_surface_mm: float | None = None
+    back_focal_length_min_mm: float | None = None
+    back_focal_length_max_mm: float | None = None
+    mechanical_drawing_id: str | None = None
+    mechanical_source_url: str | None = None
+    is_workbook_reference: bool = False
+    provenance_notes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.provenance_notes, tuple):
+            object.__setattr__(self, "provenance_notes", tuple(self.provenance_notes))
         if not self.id.strip() or not self.sku.strip():
             raise ValueError("Lens id and SKU are required.")
-        if self.focal_length_mm <= 0:
-            raise ValueError("Lens focal length must be positive.")
+        if not isfinite(self.focal_length_mm) or self.focal_length_mm <= 0:
+            raise ValueError("Lens focal length must be finite and positive.")
+        for field_name in (
+            "image_circle_mm",
+            "wavelength_min_nm",
+            "wavelength_max_nm",
+            "working_distance_min_mm",
+            "working_distance_max_mm",
+            "outer_diameter_mm",
+            "overall_length_mm",
+            "weight_g",
+            "resolution_lp_per_mm",
+            "aperture_f_number",
+            "front_housing_length_mm",
+            "threaded_section_length_mm",
+            "thread_major_diameter_mm",
+            "thread_pitch_mm",
+            "back_focal_length_min_mm",
+            "back_focal_length_max_mm",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and (not isfinite(value) or value <= 0):
+                raise ValueError(f"{field_name} must be finite and positive when specified.")
+        recess = self.first_object_surface_recess_from_front_housing_mm
+        if recess is not None and (not isfinite(recess) or recess < 0):
+            raise ValueError(
+                "first_object_surface_recess_from_front_housing_mm must be "
+                "finite and non-negative when specified."
+            )
+        if (
+            self.back_focal_length_min_mm is not None
+            and self.back_focal_length_max_mm is not None
+            and self.back_focal_length_min_mm > self.back_focal_length_max_mm
+        ):
+            raise ValueError("back focal length minimum must not exceed maximum.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +236,7 @@ class WorkbookDesignInput:
     v_mm: float
     d_mm: float
     sensor_length_mm: float | None
-    alpha_deg: float
+    alpha_deg: float | None = None
     sensor_id: str = "basler-aca1300-60gm-sensor"
     sensor_axis: str = "height"
     focal_length_literal_mm: float | None = None
@@ -300,13 +354,23 @@ class DesignSolution:
 
 @dataclass(frozen=True, slots=True)
 class SceneGeometry:
-    """Named primitives for a real-time 2D optical section."""
+    """Named primitives for a real-time 2D optical section.
+
+    ``object_principal_plane`` and ``image_principal_plane`` are the axial
+    section coordinates of the object-space principal point H and image-space
+    principal point H′.  Thin-lens solutions place both at ``lens_center``;
+    no unverified principal-plane separation or lens-to-sensor ``h`` distance
+    is implied.
+    """
 
     emitter: Point2D
     target_near: Point2D
     target_center: Point2D
     target_far: Point2D
     lens_center: Point2D
+    object_principal_plane: Point2D
+    image_principal_plane: Point2D
+    principal_planes_coincident: bool
     image_center: Point2D
     sensor_near: Point2D
     sensor_far: Point2D
@@ -328,6 +392,8 @@ class SceneGeometry:
             self.target_center,
             self.target_far,
             self.lens_center,
+            self.object_principal_plane,
+            self.image_principal_plane,
             self.image_center,
             self.sensor_near,
             self.sensor_far,

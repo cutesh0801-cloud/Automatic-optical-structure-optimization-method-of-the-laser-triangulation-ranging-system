@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from time import perf_counter
 
+import pytest
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 
 from scheimpflug_optimeter.ui.scene import (
+    LensMechanicalSnapshot,
     OpticsGraphicsScene,
     OpticsGraphicsView,
     Point2D,
     SceneSnapshot,
+    build_lens_body_section,
 )
 
 
@@ -51,8 +55,32 @@ def snapshot(*, valid: bool = True) -> SceneSnapshot:
         lo_mm=58.3,
         fp_mm=15.3,
         focal_length_mm=12.0,
+        alpha_deg=30.0,
+        beta_deg=45.0,
+        baseline_mm=38.0,
+        v_mm=200.0,
+        object_principal_plane=lens,
+        image_principal_plane=lens,
+        principal_planes_coincident=True,
         valid=valid,
         warnings=() if valid else ("센서 범위를 벗어났습니다.",),
+    )
+
+
+def lens_mechanics() -> LensMechanicalSnapshot:
+    return LensMechanicalSnapshot(
+        lens_id="edmund-58-206",
+        sku="58-206",
+        drawing_id="DWG 58206",
+        overall_length_mm=20.68,
+        outer_diameter_mm=14.0,
+        front_housing_length_mm=7.60,
+        threaded_section_length_mm=13.08,
+        thread_major_diameter_mm=12.0,
+        first_surface_recess_mm=0.30,
+        object_principal_from_first_surface_mm=5.57,
+        image_principal_from_last_surface_mm=-12.71,
+        supplier_verified=True,
     )
 
 
@@ -95,6 +123,13 @@ def workbook_snapshot() -> SceneSnapshot:
         lo_mm=57.0,
         fp_mm=14.0,
         focal_length_mm=11.2,
+        alpha_deg=14.27,
+        beta_deg=75.73,
+        baseline_mm=52.13954828,
+        v_mm=205.0,
+        object_principal_plane=point(55.0, 190.0),
+        image_principal_plane=point(55.0, 190.0),
+        principal_planes_coincident=True,
         workbook_mode=True,
     )
 
@@ -188,6 +223,11 @@ def test_scene_updates_reusable_items_and_required_labels(qtbot, tmp_path):
     ):
         assert glyph.isVisible()
         assert "개념 표시" in glyph.toolTip()
+    assert scene.principal_h_marker.isVisible()
+    assert not scene.principal_h_prime_marker.isVisible()
+    assert "H′" in scene.principal_h_marker.toolTip()
+    assert "α=30.000°" in scene.labels["lens"].text()
+    assert "β=45.000°" in scene.labels["lens"].text()
     assert all(
         arrow.isVisible() and arrow.line().length() > 0.0
         for arrows in scene.dimension_arrowheads.values()
@@ -203,6 +243,31 @@ def test_scene_updates_reusable_items_and_required_labels(qtbot, tmp_path):
     assert scene.export_svg(svg).exists()
     assert png.stat().st_size > 0
     assert "<svg" in svg.read_text(encoding="utf-8")
+
+
+def test_verified_lens_body_is_back_calculated_from_h_without_guessing_h_prime():
+    value = replace(snapshot(), lens_mechanics=lens_mechanics())
+
+    section = build_lens_body_section(value)
+
+    assert section is not None
+    front_to_h = math.hypot(
+        section.object_principal_plane.x_mm - section.front_housing.x_mm,
+        section.object_principal_plane.z_mm - section.front_housing.z_mm,
+    )
+    body_length = math.hypot(
+        section.rear_housing.x_mm - section.front_housing.x_mm,
+        section.rear_housing.z_mm - section.front_housing.z_mm,
+    )
+    assert front_to_h == pytest.approx(5.87)
+    assert body_length == pytest.approx(20.68)
+
+    scene = OpticsGraphicsScene()
+    scene.set_snapshot(value)
+    assert "#58-206 외형" in scene.labels["lens"].text()
+    assert "DWG 58206" in scene.lens_glyph.toolTip()
+    assert "역산" in scene.lens_glyph.toolTip()
+    assert "H′ 공급사 값" in scene.labels["lens"].toolTip()
 
 
 def test_invalid_scene_is_red_dashed_and_stale_scene_can_be_hidden(qtbot):
@@ -295,12 +360,15 @@ def test_remote_geometry_is_ray_clipped_without_expanding_the_scene(qtbot):
     assert scene.range_remote_arrow.isVisible()
     assert scene.scheimpflug_remote_arrow.isVisible()
     assert not scene.proxy_sensor_line.isVisible()
-    assert "워크북 WD 파라미터 d = 205.000 mm" in scene.labels["wd"].text()
+    assert "기준 거리 V = 205.000 mm" in scene.labels["wd"].text()
+    assert "워킹 디스턴스 d = 205.000 mm" in scene.labels["wd"].text()
     assert "R=V−d" in scene.labels["wd"].toolTip()
     assert "광선 교차 거리 |s|" in scene.labels["range"].text()
     assert "아래 계속 ↓" in scene.labels["range"].text()
     assert "왼쪽 계속 ←" in scene.labels["scheimpflug"].text()
-    assert scene.labels["sensor"].text() == "입력 이미지/센서 구간 L"
+    assert scene.labels["sensor"].text() == "CMOS · 입력 이미지 구간 L"
+    assert "CMOS 틸트 입력이 아닙니다" in scene.labels["sensor"].toolTip()
+    assert "b = 52.140 mm" in scene.labels["w"].text()
     assert "W=b+L/2" in scene.labels["w"].text()
     assert "R=V−d" in scene.labels["r"].text()
     assert "-1165.000 mm" in scene.labels["range"].toolTip()

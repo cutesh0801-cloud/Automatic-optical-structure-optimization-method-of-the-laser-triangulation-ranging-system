@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from scheimpflug_optimeter import __version__
+from scheimpflug_optimeter.lens_presets import LensPresetError
 from scheimpflug_optimeter.project import (
     PROJECT_SUFFIX,
     ProjectDocument,
@@ -35,18 +36,18 @@ _DEFAULT_DESIGN_INPUT = {
     "mode": "workbook",
     "sensor_axis": "height",
     "d_mm": 100.0,
-    "range_mm": 5.0,
-    "v_mm": 205.0,
+    "v_mm": 150.0,
     "sensor_length_mm": 5.4378,
-    "alpha_deg": 14.27,
-    "beta_deg": 30.0,
-    "max_width_mm": 105.0,
-    "max_rear_mm": 105.0,
-    "wavelength_nm": 650.0,
+    "sensor_length_linked": True,
+    "focal_length_literal_mm": 17.5,
+    "focal_length_linked": True,
+    "alpha_manual": False,
+    "alpha_deg": None,
+    "user_lens_presets": {"schema_version": 1, "presets": []},
 }
 _DEFAULT_HARDWARE = {
     "camera_id": "basler-aca1300-60gm",
-    "lens_id": "edmund-33-879",
+    "lens_id": "edmund-58-206",
 }
 
 
@@ -288,7 +289,9 @@ class MainWindow(QMainWindow):
             project_name=self._project_name,
             design_input=design_input,
             hardware=hardware,
-            selected_optimization=self.design.selected_optimization,
+            # Schema-v1 retains this optional field, but the Workbook
+            # simulator deliberately has no optimization execution path.
+            selected_optimization=None,
             ui_state={
                 "active_tab": self.tabs.currentIndex(),
                 "design_splitter_sizes": self.design.splitter.sizes(),
@@ -298,17 +301,66 @@ class MainWindow(QMainWindow):
     def apply_document(self, document: ProjectDocument, source: Path | None = None) -> None:
         self._loading = True
         try:
-            values = dict(document.design_input)
-            values.update(document.hardware)
-            self.design.apply_project_input(values)
-            self.design.selected_optimization = document.selected_optimization
+            try:
+                raw_values = dict(document.design_input)
+                if (
+                    raw_values.get("focal_length_linked") is False
+                    and "focal_length_literal_mm" not in raw_values
+                    and "focal_length_mm" not in raw_values
+                ):
+                    raise LensPresetError(
+                        "초점거리 연동을 해제한 프로젝트에는 초점거리 숫자값이 필요합니다."
+                    )
+                for state_key, required_key, label in (
+                    ("alpha_manual", "alpha_deg", "α 직접 입력"),
+                    ("sensor_length_linked", "sensor_length_mm", "센서 길이 연동 해제"),
+                ):
+                    required_state = state_key == "alpha_manual"
+                    if (
+                        raw_values.get(state_key) is required_state
+                        and required_key not in raw_values
+                    ):
+                        raise LensPresetError(
+                            f"{label} 상태에는 {required_key} 숫자값이 필요합니다."
+                        )
+
+                values = dict(_DEFAULT_DESIGN_INPUT)
+                values.update(raw_values)
+                # Schema-v1 files created before explicit link-state fields
+                # existed are migrated deterministically from their numeric
+                # input instead of inheriting whichever UI state is open.
+                if "focal_length_mm" in raw_values and "focal_length_literal_mm" not in raw_values:
+                    values.pop("focal_length_literal_mm", None)
+                for state_key, numeric_key in (
+                    ("focal_length_linked", "focal_length_mm"),
+                    ("focal_length_linked", "focal_length_literal_mm"),
+                    ("alpha_manual", "alpha_deg"),
+                    ("sensor_length_linked", "sensor_length_mm"),
+                ):
+                    if state_key not in raw_values and numeric_key in raw_values:
+                        values.pop(state_key, None)
+
+                hardware = dict(_DEFAULT_HARDWARE)
+                hardware.update(document.hardware)
+                values.update(hardware)
+                self.design.apply_project_input(values)
+            except (LensPresetError, TypeError, ValueError) as exc:
+                raise ProjectError(
+                    f"프로젝트 입력 또는 사용자 렌즈 프리셋이 잘못되었습니다: {exc}"
+                ) from exc
+            # Read old project files without reviving their former optimizer
+            # selection into this Workbook-only UI.
+            self.design.selected_optimization = None
             sizes = document.ui_state.get("design_splitter_sizes")
-            if (
-                isinstance(sizes, list)
-                and len(sizes) == 3
-                and all(isinstance(value, int) and value >= 0 for value in sizes)
+            if isinstance(sizes, list) and all(
+                isinstance(value, int) and value >= 0 for value in sizes
             ):
-                self.design.splitter.setSizes(sizes)
+                if len(sizes) == 2:
+                    self.design.splitter.setSizes(sizes)
+                elif len(sizes) == 3:
+                    # Schema-v1 projects created by the former three-pane UI
+                    # keep the worksheet width and merge both visual panes.
+                    self.design.splitter.setSizes([sizes[0], sizes[1] + sizes[2]])
             active_tab = document.ui_state.get("active_tab", 0)
             if isinstance(active_tab, int) and 0 <= active_tab < self.tabs.count():
                 self.tabs.setCurrentIndex(active_tab)
@@ -456,7 +508,10 @@ class MainWindow(QMainWindow):
             if self.design.input_panel.sensor_axis.findData(sensor_axis) < 0:
                 raise ProjectError("CSV의 sensor_axis는 height 또는 width여야 합니다.")
             values["sensor_axis"] = sensor_axis
-        self.design.apply_project_input(values)
+        try:
+            self.design.apply_project_input(values)
+        except (LensPresetError, TypeError, ValueError) as exc:
+            raise ProjectError(f"CSV 입력값을 적용할 수 없습니다: {exc}") from exc
         self.design.recalculate()
         self.tabs.setCurrentIndex(0)
         self._mark_dirty()

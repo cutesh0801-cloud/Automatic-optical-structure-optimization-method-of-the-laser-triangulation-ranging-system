@@ -7,7 +7,11 @@ from dataclasses import replace
 import pytest
 from PySide6.QtCore import Qt
 
-from scheimpflug_optimeter.ui.scene import Point2D, SceneSnapshot
+from scheimpflug_optimeter.ui.scene import (
+    LensMechanicalSnapshot,
+    Point2D,
+    SceneSnapshot,
+)
 from scheimpflug_optimeter.ui.three_d import ThreeDWidget
 
 
@@ -42,6 +46,27 @@ def snapshot() -> SceneSnapshot:
         lo_mm=100.0,
         fp_mm=33.541019662,
         focal_length_mm=25.0,
+        alpha_deg=30.0,
+        beta_deg=60.0,
+        baseline_mm=75.0,
+        v_mm=200.0,
+        object_principal_plane=lens_center,
+        image_principal_plane=lens_center,
+        principal_planes_coincident=True,
+        lens_mechanics=LensMechanicalSnapshot(
+            lens_id="edmund-58-206",
+            sku="58-206",
+            drawing_id="DWG 58206",
+            overall_length_mm=20.68,
+            outer_diameter_mm=14.0,
+            front_housing_length_mm=7.60,
+            threaded_section_length_mm=13.08,
+            thread_major_diameter_mm=12.0,
+            first_surface_recess_mm=0.30,
+            object_principal_from_first_surface_mm=5.57,
+            image_principal_from_last_surface_mm=-12.71,
+            supplier_verified=True,
+        ),
     )
 
 
@@ -95,6 +120,8 @@ def test_3d_scene_uses_shapes_without_canvas_text(qtbot):
         "camera_body",
         "sensor_body",
         "lens",
+        "first_object_surface",
+        "principal_plane_h_h_prime",
         "laser_emitter",
         "laser_beam",
         "optical_axis",
@@ -111,6 +138,9 @@ def test_3d_scene_uses_shapes_without_canvas_text(qtbot):
     for name in ("target_plane", "lens_plane", "sensor_plane"):
         # Each plane remains identifiable by an edged translucent face and normal.
         assert len(widget._components[name]) >= 2
+    assert len(widget._components["lens"]) >= 4
+    assert len(widget._components["first_object_surface"]) >= 2
+    assert len(widget._components["principal_plane_h_h_prime"]) >= 2
     assert widget.axes.get_legend() is None
     assert visible_canvas_text(widget) == []
     assert widget.axes.get_xlabel() == ""
@@ -120,6 +150,8 @@ def test_3d_scene_uses_shapes_without_canvas_text(qtbot):
     assert all(not label.get_text() for label in widget.axes.get_yticklabels())
     assert all(not label.get_text() for label in widget.axes.get_zticklabels())
     assert "WD=" in widget.status_card.text()
+    assert "렌즈 #58-206 공식 도면 mm 축척" in widget.status_card.text()
+    assert "카메라 외형 개념 표시" in widget.status_card.text()
     assert "γ=" not in widget.status_card.text()
     assert "δ=" not in widget.status_card.text()
     assert "레이저 평면" not in widget.scene_key.text()
@@ -143,6 +175,15 @@ def test_3d_scene_uses_shapes_without_canvas_text(qtbot):
     assert widget._view_mode == "head"
     assert widget.head_button.isChecked()
     assert any(term in widget.status_card.text() for term in ("광학 헤드", "Optical head"))
+
+
+def test_3d_marks_lens_as_schematic_when_mechanical_datum_is_absent(qtbot):
+    widget = rendered_widget(
+        qtbot,
+        replace(snapshot(), lens_mechanics=None),
+    )
+
+    assert "렌즈·카메라 외형 개념 표시" in widget.status_card.text()
 
 
 def test_3d_fit_and_default_view_controls_restore_readable_state(qtbot):

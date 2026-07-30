@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from types import MappingProxyType
 
 import pytest
@@ -30,6 +32,7 @@ def test_catalog_contains_verified_basler_tiers_and_edmund_skus():
         "edmund-33-879",
         "edmund-83-953",
         "edmund-36-376",
+        "edmund-58-206",
         "edmund-83-954",
         "edmund-36-385",
         "edmund-70-646",
@@ -56,6 +59,61 @@ def test_catalog_contains_verified_basler_tiers_and_edmund_skus():
     assert (daa.sensor.width_px, daa.sensor.height_px) == (2448, 2048)
     assert any("2472 x 2064" in note for note in daa.notes)
     assert any("29.8 fps" in note and "72.8 fps" in note for note in daa.notes)
+
+
+def test_workbook_reference_lens_and_f8_variant_remain_distinct_and_traceable():
+    workbook_lens = get_lens("edmund-58-206")
+    f8_lens = get_lens("edmund-83-954")
+
+    assert workbook_lens.is_workbook_reference
+    assert workbook_lens.sku == "58-206"
+    assert workbook_lens.aperture_f_number == pytest.approx(2.5)
+    assert f8_lens.sku == "83-954"
+    assert not f8_lens.is_workbook_reference
+    assert f8_lens.aperture_f_number == pytest.approx(8.0)
+    assert workbook_lens.focal_length_mm == f8_lens.focal_length_mm == pytest.approx(17.5)
+
+    for lens, expected_length, expected_thread, expected_recess in (
+        (workbook_lens, 20.68, 13.08, 0.30),
+        (f8_lens, 20.70, 13.10, 0.12),
+    ):
+        assert lens.outer_diameter_mm == pytest.approx(14.0)
+        assert lens.overall_length_mm == pytest.approx(expected_length)
+        assert lens.front_housing_length_mm == pytest.approx(7.60)
+        assert lens.threaded_section_length_mm == pytest.approx(expected_thread)
+        assert lens.thread_major_diameter_mm == pytest.approx(12.0)
+        assert lens.thread_pitch_mm == pytest.approx(0.5)
+        assert lens.first_object_surface_recess_from_front_housing_mm == pytest.approx(
+            expected_recess
+        )
+        assert lens.object_principal_plane_from_first_object_surface_mm == pytest.approx(5.57)
+        assert lens.image_principal_plane_from_last_image_surface_mm == pytest.approx(-12.71)
+        assert lens.back_focal_length_min_mm == pytest.approx(4.9)
+        assert lens.back_focal_length_max_mm == pytest.approx(5.8)
+        assert lens.mechanical_drawing_id
+        assert lens.mechanical_source_url
+        assert "document/download/" in lens.mechanical_source_url
+        assert lens.provenance_notes
+
+
+def test_lens_catalog_extended_fields_are_json_serializable_and_tuple_backed():
+    lens = get_lens("edmund-58-206")
+
+    assert isinstance(lens.provenance_notes, tuple)
+    serialized = json.loads(json.dumps(asdict(lens)))
+    assert serialized["is_workbook_reference"] is True
+    assert serialized["image_principal_plane_from_last_image_surface_mm"] == pytest.approx(-12.71)
+    assert serialized["provenance_notes"]
+
+    direct = LensProfile(
+        id="provenance-test",
+        manufacturer="Test",
+        sku="PROV",
+        name="Provenance test",
+        focal_length_mm=10.0,
+        provenance_notes=["input list is frozen as a tuple"],  # type: ignore[arg-type]
+    )
+    assert direct.provenance_notes == ("input list is frozen as a tuple",)
 
 
 def test_sensor_can_be_resolved_by_sensor_or_camera_id_and_catalog_is_immutable():

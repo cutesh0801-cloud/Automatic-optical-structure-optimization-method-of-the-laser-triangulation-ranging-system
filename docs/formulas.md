@@ -1,112 +1,162 @@
-# Optical formulas
+# 광학 계산식
 
-All internal lengths are millimetres and angles are radians. UI angles are
-degrees. A near-zero denominator is an invalid design, not a numeric result.
+이 문서는 `구조설계_rev.1.xlsx` 계산을 프로그램에서 어떻게 해석하는지
+설명한다. 사용자 화면의 계산 경로는 Workbook 모델 하나이며, 논문의 전체
+모델이나 별도 구조 최적화 모델을 구현한 것이 아니다.
 
-## Workbook compatibility
+내부 길이 단위는 mm, 내부 각도 단위는 radian이다. 화면에는 각도를 degree로
+표시한다. 분모가 0에 가까운 경우에는 큰 수를 결과처럼 표시하지 않고 유효하지
+않은 구조로 처리한다.
 
-The compatibility solver reproduces the supplied workbook without embedding
-the workbook itself:
+## 1. Workbook 좌표계와 평면
+
+2D 계산 좌표는 다음과 같이 고정한다.
 
 ```text
-β = 90° - α
-b = V tan(α)
-x = L / 2
-W = b + x
-R = V - d
-fp = b cos(β)
-lo = V cos(α)
-s = x lo sin(β) / (fp sin(α) - x sin(α + β))
-f = 1 / (1/lo + 1/fp)
+Zero position / 기준점  T = (0, 0)
+Laser diode / 발광점    E = (0, V)
+Image centre / CMOS     I = (b, V)
 ```
 
-`L` is required. The source workbook contained formula references to empty
-length cells, which spreadsheet software silently treated as zero; the
-application rejects that state.
+- 레이저 조사축은 `x=0`인 수직선이다.
+- CMOS(이미지 평면)는 `z=V`인 수평선이다.
+- 따라서 CMOS는 레이저 조사축에 직교하며 기울어져 있지 않다.
+- `β=90°−α`는 수광축과 CMOS 사이의 직각삼각형 보각이다. CMOS tilt
+  입력이나 센서의 기구 회전각이 아니다.
 
-The sanitized regression fixture records all 16 workbook positions across two
-sheets and two calculation blocks. Four positions have complete inputs and are
-checked at relative tolerance `1e-9` and absolute tolerance `1e-10`. The other
-12 reference absent `L` source cells (`W24`, `AB24`, `AG24`, `W53`, `AB53`,
-or `AG53`) and are intentionally blocked. Unlabelled `M34 = 98.2 mm`, the
-32,767-space `J33` cell, and formula-free RM-CMOS/FOV literals are provenance,
-not authoritative equations.
-
-## Canonical thin-lens model
-
-The low-angle solution for an observation angle is the root of
+수광축의 단위벡터를
 
 ```text
-sin²(α) cos(α) = f / V
+u = (sin α, cos α)
 ```
 
-within `0 < α < 54.735610317°`. It exists only when
-`0 < f/V < 2/(3√3)`.
-
-For independently selected observation and sensor angles:
+라고 하면 얇은 렌즈 계산의 주평면 위치는 다음과 같다.
 
 ```text
-r  = tan(β) / tan(α)
-lo = f(1 + r)
-fp = f(1 + 1/r)
+H = T + l₀ u
+H′ = H                    (Workbook thin-lens 가정)
+I = H + fₚ u = (b, V)
 ```
 
-This satisfies both `1/lo + 1/fp = 1/f` and
-`lo tan(α) = fp tan(β)`.
+렌즈 평면의 방향벡터는 `(cos α, −sin α)`이다. 이 벡터는 수광축 `u`와
+직교한다. 즉 렌즈 평면은 수광축에 수직이며, 레이저 조사축에 수직인 것이
+아니다. 이 렌즈 평면을 연장하면 CMOS 평면과 발광점 `E`에서 만난다.
 
-A range displacement `s` maps to signed image coordinate
+## 2. 입력과 Workbook 계산
+
+기본 입력은 초점거리 `f`, 기준 높이/거리 `V`, Working distance `d`,
+센서/이미지 길이 `L`이다. 기본 모드에서는 `f`와 `V`로 저각 해 `α`를
+구한다.
 
 ```text
-x(s) = s fp sin(α) /
-       (lo sin(β) + s sin(α + β))
+sin²α cosα = f / V
+0° < α < 54.735610317°
 ```
 
-The active image length is `x(S/2)-x(-S/2)`. Because the mapping is nonlinear,
-the exact segment is generally asymmetric about the nominal image point. The
-application draws this exact segment solid and the paper's centred packaging
-proxy dashed.
-
-## Sensor-profile FOV, sampling and range sensitivity
-
-For a fixed optical solution, write the tilted-axis image mapping as
+해가 존재하려면 다음 조건을 만족해야 한다.
 
 ```text
-A = fp sin(α)
-B = lo sin(β)
+0 < f/V < 2/(3√3)
+```
+
+원본 Workbook의 반올림 값을 그대로 회귀 검증해야 할 때만 `α 직접 입력`을
+사용한다. 이 경우 프로그램은 입력 `α`를 권위 있는 값으로 사용하고, `f`로부터
+다시 구한 값과의 차이를 숨기지 않는다.
+
+Workbook 관계식은 다음과 같다.
+
+```text
+β  = 90° − α
+b  = V tan α
+x  = L / 2
+W  = b + x
+R  = V − d
+fₚ = b cos β
+l₀ = V cos α
+s  = x l₀ sin β / (fₚ sin α − x sin(α + β))
+f_calc = 1 / (1/l₀ + 1/fₚ)
+```
+
+여기서 `s`는 센서의 레이저축 쪽 끝을 통과한 광선이 레이저 조사축과 만나는
+거리이다. 부호는 좌표 방향을 나타내며 화면에서는 필요한 문맥에 따라 절댓값과
+좌표를 함께 사용한다.
+
+결과는 다음 두 식도 만족해야 한다.
+
+```text
+1/l₀ + 1/fₚ = 1/f_calc
+l₀ tan α = fₚ tan β
+```
+
+원본 Workbook의 일부 블록은 `L`이 들어갈 셀 대신 비어 있는 셀
+(`W24`, `AB24`, `AG24`, `W53`, `AB53`, `AG53`)을 참조한다. Excel은 이를
+0으로 계산하지만 프로그램은 누락 입력으로 차단한다. 출처가 없는 `98.2 mm`,
+32,767개의 공백이 든 셀, 수식이 없는 RM-CMOS/FOV 값은 계산식으로 사용하지
+않는다.
+
+## 3. H, H′와 실제 렌즈 외형의 위치
+
+Workbook 셀에는 H/H′의 수치 분리나 두꺼운 렌즈의 주평면 간격 `e`가 없다.
+따라서 광학 계산은 `H=H′`인 얇은 렌즈 모델을 사용한다. 공급사 렌즈 데이터의
+H/H′를 임의로 Workbook 좌표의 두 점으로 바꾸지 않는다.
+
+공식 데이터에 외형 기준과 물체측 주평면 기준이 모두 있는 렌즈는 계산된 `H`
+위치에서 외형을 역산한다. 물체에서 이미지 방향의 수광축 단위벡터를 `u`라고
+하고 렌즈 전면 하우징 기준을 `F₀`, 첫 물체측 광학면을 `S₁`이라고 하면:
+
+```text
+F₀ = H − (front recess + S₁→H) u
+S₁ = F₀ + front recess · u
+housing step = F₀ + front housing length · u
+rear housing = F₀ + overall length · u
+```
+
+Edmund Optics가 제공하는 공통 광학 기준값은 `S₁→H=+5.57 mm`,
+마지막 이미지측 광학면 기준 `H′=−12.71 mm`이다.
+
+- #58-206: 전면 광학면 recess가 `0.30 mm`이므로 `F₀→H=5.87 mm`
+- #83-954: 전면 광학면 recess가 `0.12 mm`이므로 `F₀→H=5.69 mm`
+
+마지막 이미지측 광학면이 하우징 후면에서 정확히 어디에 있는지는 공식 외형
+치수만으로 정해지지 않는다. 따라서 `H′=−12.71 mm`에서 하우징 기준의 절대
+`H′` 위치나 `H−H′` 간격을 추정하지 않는다.
+
+또한 Workbook의 `58206_002`는 Edmund Optics **#58-206 17.5 mm f/2.5**를
+가리킨다. 같은 초점거리의 **#83-954 17.5 mm f/8**과 다른 부품이다.
+
+## 4. Basler 정적 센서 계산
+
+Basler 모델 선택은 장치 연결이 아니라 해상도, 픽셀 피치와 활성 센서 치수를
+불러오는 정적 규격 선택이다.
+
+수광축 방향의 상 좌표와 그 역함수는 다음과 같다.
+
+```text
+A = fₚ sin α
+B = l₀ sin β
 C = sin(α + β)
+
 x(s) = A s / (B + C s)
+s(x) = B x / (A − C x)
 ```
 
-The object displacement corresponding to a sensor coordinate is the exact
-inverse
+선택 센서 축의 양 끝 `x=−L/2`, `x=+L/2`를 역변환해 물체측 FOV를 구한다.
+`A−Cx=0`인 pole이 센서 범위 안에 있으면 유한 FOV가 아니므로 계산을
+차단한다.
+
+픽셀당 국부 거리 변화량은 다음과 같다.
 
 ```text
-s(x) = B x / (A - C x)
+ds/dpixel = |A B / (A − Cx)²| × pixel_pitch_mm
 ```
 
-The selected sensor axis spans `x = -L/2 ... +L/2`. Its object-space field is
-the absolute difference between the two inverse-mapped endpoints. A pole
-`A-Cx=0` inside that interval makes the field invalid instead of producing an
-infinite-looking result.
-
-Local geometric range sensitivity is
-
-```text
-ds/dpixel = |A B / (A - C x)²| × pixel_pitch_mm
-```
-
-and is reported at the two endpoints and centre, with the worst value called
-out separately. Because this derivative varies across a tilted sensor, one
-single centre value must not be presented as uniform resolution.
-
-At the reference plane the transverse magnification is `m=fp/lo`. The axis
-orthogonal to triangulation therefore uses
+이 값은 센서 위치에 따라 달라지므로 근거리, 중앙, 원거리와 최악값을 따로
+표시한다. 삼각측량축과 직교하는 축은 기준면 배율 `m=fₚ/l₀`를 사용한다.
 
 ```text
 FOV_orthogonal = sensor_length_orthogonal / |m|
+average sampling = FOV / native pixel count
 ```
 
-Average object sampling on either display axis is its calculated FOV divided
-by the corresponding native pixel count. These are geometric sampling
-metrics; diffraction, MTF, blur, pixel aperture, noise and quantum efficiency
-are outside the model.
+이 결과는 이상적인 기하 FOV와 샘플링이다. 회절, MTF, 초점 흐림, 픽셀
+개구율, 노이즈, 양자효율과 실제 최소 검출 성능은 포함하지 않는다.

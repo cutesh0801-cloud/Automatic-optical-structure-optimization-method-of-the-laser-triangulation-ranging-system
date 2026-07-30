@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .scene import Point2D, SceneSnapshot
+from .scene import Point2D, SceneSnapshot, build_lens_body_section
 
 np: Any | None = None
 FigureCanvasQTAgg: Any | None = None
@@ -40,6 +40,9 @@ _COLORS = {
     "laser": "#d92d20",
     "camera": "#40566f",
     "lens": "#48a9dc",
+    "lens_glass": "#8fd8f4",
+    "principal_h": "#20a464",
+    "principal_h_prime": "#137a4a",
     "ray": "#7254b3",
     "scheimpflug": "#b76e00",
     "axis": "#66788a",
@@ -318,6 +321,15 @@ class ThreeDWidget(QWidget):
             view,
             f"WD={snapshot.working_distance_mm:.1f} mm",
         ]
+        if snapshot.lens_mechanics is None:
+            parts.append("렌즈·카메라 외형 개념 표시")
+        elif snapshot.lens_mechanics.supplier_verified:
+            parts.append(f"렌즈 #{snapshot.lens_mechanics.sku} 공식 도면 mm 축척")
+        else:
+            parts.append(f"사용자 렌즈 {snapshot.lens_mechanics.sku} 입력 외형 mm 축척")
+            parts.append("공급사 검증 아님")
+        if snapshot.lens_mechanics is not None:
+            parts.append("카메라 외형 개념 표시")
         if self._beam_was_clipped:
             parts.append(
                 self._text(
@@ -462,16 +474,23 @@ class ThreeDWidget(QWidget):
         self._register(name, body)
         self._fit_points.extend(vertices)
 
-    def _lens(
+    def _cylinder(
         self,
+        name: str,
         center: np.ndarray,
         normal: np.ndarray,
         tangent: np.ndarray,
         radius: float,
-        thickness: float,
+        length: float,
+        color: str,
+        edge: str,
+        *,
+        alpha: float = 0.9,
     ) -> None:
+        """Draw one capped cylinder along the receiving optical axis."""
+
         theta = np.linspace(0.0, 2.0 * math.pi, 28)
-        axial, angle = np.meshgrid((-thickness / 2.0, thickness / 2.0), theta)
+        axial, angle = np.meshgrid((-length / 2.0, length / 2.0), theta)
         normal, tangent = _unit(normal, _Z), _unit(tangent, _X)
         coordinates = (
             center[:, None, None]
@@ -481,20 +500,114 @@ class ThreeDWidget(QWidget):
         )
         surface = self.axes.plot_surface(
             *coordinates,
-            color=_COLORS["lens"],
-            alpha=0.72,
-            linewidth=0.35,
-            edgecolor="#1f6389",
+            color=color,
+            alpha=alpha,
+            linewidth=0.42,
+            edgecolor=edge,
         )
-        self._register("lens", surface)
+        cap_faces = []
+        for sign in (-1.0, 1.0):
+            cap_center = center + normal * (length / 2.0 * sign)
+            cap_faces.append(
+                [
+                    cap_center
+                    + tangent * (radius * math.cos(value))
+                    + _Y * (radius * math.sin(value))
+                    for value in theta
+                ]
+            )
+        caps = Poly3DCollection(
+            cap_faces,
+            facecolors=color,
+            edgecolors=edge,
+            linewidths=0.55,
+            alpha=alpha,
+        )
+        self.axes.add_collection3d(caps)
+        self._register(name, surface, caps)
         self._fit_points.extend(
             (
+                center - normal * length / 2.0,
+                center + normal * length / 2.0,
                 center + tangent * radius,
                 center - tangent * radius,
                 center + _Y * radius,
                 center - _Y * radius,
             )
         )
+
+    def _stepped_lens(
+        self,
+        snapshot: SceneSnapshot,
+        principal: np.ndarray,
+        normal: np.ndarray,
+        tangent: np.ndarray,
+    ) -> tuple[float, float, tuple[np.ndarray, ...]]:
+        """Draw a verified EO housing or a clearly marked schematic fallback."""
+
+        normal = _unit(normal, _Z)
+        mechanics = snapshot.lens_mechanics
+        section = build_lens_body_section(snapshot)
+        if mechanics is None or section is None:
+            radius = 6.0
+            length = 14.0
+            flange_length = length * 0.34
+            barrel_length = length - flange_length
+            front = principal - normal * length / 2.0
+            rear = principal + normal * length / 2.0
+            flange_center = front + normal * flange_length / 2.0
+            barrel_center = front + normal * (flange_length + barrel_length / 2.0)
+            thread_radius = radius * 0.72
+            first_surface = front
+        else:
+            front = _point3(section.front_housing)
+            rear = _point3(section.rear_housing)
+            first_surface = _point3(section.first_object_surface)
+            length = mechanics.overall_length_mm
+            radius = mechanics.outer_diameter_mm / 2.0
+            flange_length = mechanics.front_housing_length_mm
+            barrel_length = mechanics.threaded_section_length_mm
+            flange_center = front + normal * flange_length / 2.0
+            barrel_center = _point3(section.housing_step) + normal * barrel_length / 2.0
+            thread_radius = mechanics.thread_major_diameter_mm / 2.0
+
+        self._cylinder(
+            "lens",
+            flange_center,
+            normal,
+            tangent,
+            radius,
+            flange_length,
+            _COLORS["lens"],
+            "#1f6389",
+        )
+        self._cylinder(
+            "lens",
+            barrel_center,
+            normal,
+            tangent,
+            thread_radius,
+            barrel_length,
+            "#7dc2e4",
+            "#245f7e",
+        )
+
+        # The supplier verifies the first-surface axial datum, but not its
+        # clear aperture in the workbook.  Use a shallow translucent cue and
+        # do not expose it as a dimensioned glass diameter.
+        glass_length = max(0.12, length * 0.008)
+        self._cylinder(
+            "first_object_surface",
+            first_surface,
+            normal,
+            tangent,
+            min(thread_radius, radius) * 0.72,
+            glass_length,
+            _COLORS["lens_glass"],
+            "#2f83c5",
+            alpha=0.58,
+        )
+        return radius, length, (front, first_surface, rear)
 
     def _draw_snapshot(self, snapshot: SceneSnapshot) -> None:
         self.axes.clear()
@@ -520,7 +633,7 @@ class ThreeDWidget(QWidget):
             snapshot.working_distance_mm,
             *(float(np.linalg.norm(a - b)) for a in main_points for b in main_points),
         )
-        plane_half = max(7.0, min(42.0, span * 0.13))
+        plane_half = max(9.0, min(46.0, span * 0.14))
         sensor_interval = max(
             2.0,
             float(
@@ -544,7 +657,7 @@ class ThreeDWidget(QWidget):
                 plane_half * 1.05,
                 plane_half * 0.8,
                 "target",
-                0.15,
+                0.1,
                 _Z,
                 "-",
             ),
@@ -556,7 +669,7 @@ class ThreeDWidget(QWidget):
                 plane_half * 0.82,
                 plane_half * 0.66,
                 "lens_plane",
-                0.13,
+                0.08,
                 camera_axis,
                 "-",
             ),
@@ -568,7 +681,7 @@ class ThreeDWidget(QWidget):
                 sensor_half,
                 sensor_half * 0.76,
                 "sensor",
-                0.22,
+                0.14,
                 sensor_normal,
                 "-",
             ),
@@ -598,17 +711,70 @@ class ThreeDWidget(QWidget):
                 style,
             )
 
-        # Body dimensions are enlarged schematic cues; plane coordinates remain physical.
-        lens_radius = max(4.5, min(12.0, plane_half * 0.3))
-        self._lens(lens, camera_axis, lens_tangent, lens_radius, lens_radius * 0.28)
-        body_depth = max(10.0, min(24.0, plane_half * 0.75))
-        body_width = max(sensor_interval * 1.25, lens_radius * 1.9)
-        body_height = max(sensor_interval, lens_radius * 1.55)
-        camera_center = image + camera_axis * body_depth * 0.58
+        lens_radius, lens_length, lens_body_points = self._stepped_lens(
+            snapshot,
+            lens,
+            camera_axis,
+            lens_tangent,
+        )
+
+        principal_h_value = snapshot.object_principal_plane
+        principal_h_prime_value = snapshot.image_principal_plane
+        principal_points: list[np.ndarray] = []
+        if principal_h_value is not None and principal_h_prime_value is not None:
+            principal_h = _point3(principal_h_value)
+            principal_h_prime = _point3(principal_h_prime_value)
+            principal_points.extend((principal_h, principal_h_prime))
+            principal_half = lens_radius * 0.86
+            if snapshot.principal_planes_coincident:
+                self._plane(
+                    "principal_plane_h_h_prime",
+                    principal_h,
+                    lens_tangent,
+                    _Y,
+                    principal_half,
+                    principal_half,
+                    _COLORS["principal_h"],
+                    0.13,
+                    camera_axis,
+                    "--",
+                )
+            else:
+                self._plane(
+                    "principal_plane_h",
+                    principal_h,
+                    lens_tangent,
+                    _Y,
+                    principal_half * 0.82,
+                    principal_half * 0.82,
+                    _COLORS["principal_h"],
+                    0.13,
+                    camera_axis,
+                    "--",
+                )
+                self._plane(
+                    "principal_plane_h_prime",
+                    principal_h_prime,
+                    lens_tangent,
+                    _Y,
+                    principal_half,
+                    principal_half,
+                    _COLORS["principal_h_prime"],
+                    0.1,
+                    camera_axis,
+                    ":",
+                )
+
+        body_depth = 24.0
+        body_width = 30.0
+        body_height = 26.0
+        # The camera body follows the CMOS plane normal.  It is not given an
+        # extra beta rotation; beta is a derived workbook complement.
+        camera_center = image + sensor_normal * body_depth * 0.52
         self._box(
             "camera_body",
             camera_center,
-            (camera_axis, lens_tangent, _Y),
+            (sensor_normal, sensor_tangent, _Y),
             (body_depth / 2.0, body_width / 2.0, body_height / 2.0),
             _COLORS["camera"],
             "#27394c",
@@ -625,7 +791,7 @@ class ThreeDWidget(QWidget):
             _COLORS["sensor"],
             "#946200",
         )
-        emitter_size = max(4.0, min(9.0, plane_half * 0.25))
+        emitter_size = 8.0
         emitter_center = emitter - beam_direction * emitter_size * 0.45
         emitter_side = _unit(np.cross(_Y, beam_direction), _X)
         self._box(
@@ -643,7 +809,7 @@ class ThreeDWidget(QWidget):
         self._line("laser_beam", (emitter, beam_end), _COLORS["laser"], 2.4)
         self._fit_points.extend((emitter, beam_end))
 
-        axis_end = camera_center + camera_axis * body_depth * 0.55
+        axis_end = image + camera_axis * max(body_depth * 0.45, lens_length)
         self._line("optical_axis", (target, axis_end), _COLORS["axis"], 1.35, "-.", 0.9)
         self._fit_points.extend((target, axis_end))
         for ray in snapshot.chief_rays:
@@ -676,11 +842,18 @@ class ThreeDWidget(QWidget):
             )
             self._register("scheimpflug_line", marker)
             self._fit_points.extend(points)
-        head_centers = [emitter, lens, image, camera_center]
+        head_centers = [
+            emitter,
+            lens,
+            image,
+            camera_center,
+            *lens_body_points,
+            *principal_points,
+        ]
         if scheimpflug is not None and np.linalg.norm(scheimpflug - lens) <= plane_half * 2.5:
             head_centers.append(scheimpflug)
         values = np.asarray(head_centers)
-        padding = max(8.0, plane_half * 0.36, body_height * 0.72, lens_radius * 1.25)
+        padding = max(9.0, body_height * 0.58, lens_radius * 1.1)
         self._head_points.extend(
             (
                 values.min(axis=0) - padding,

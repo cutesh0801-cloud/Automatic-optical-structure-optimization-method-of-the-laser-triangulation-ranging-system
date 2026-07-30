@@ -47,6 +47,12 @@ def _load_lenses() -> dict[str, LensProfile]:
     verified_on = str(payload["verified_on"])
     lenses: dict[str, LensProfile] = {}
     for item in payload["lenses"]:
+        # JSON arrays are mutable.  Keep the catalog's public dataclass
+        # genuinely immutable by materialising provenance as a tuple.
+        item = {
+            **item,
+            "provenance_notes": tuple(item.get("provenance_notes", ())),
+        }
         profile = LensProfile(
             **item,
             verified_on=verified_on,
