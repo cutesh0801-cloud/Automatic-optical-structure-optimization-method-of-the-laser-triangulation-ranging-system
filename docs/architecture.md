@@ -55,5 +55,7 @@ rays, Scheimpflug intersection, and the `W/R` mechanical envelope.
 - Workbook calculations and 2D scene updates run in the GUI thread after a
   16 ms debounce.
 - SciPy and M-PSO optimization run in a cancellable worker thread.
-- Inactive 3D rendering is deferred.
+- NumPy/Matplotlib import and 3D canvas construction are deferred until the 3D
+  tab is first opened. SciPy is likewise deferred until a canonical root solve
+  or optimization requests it.
 - No acquisition or device worker exists.

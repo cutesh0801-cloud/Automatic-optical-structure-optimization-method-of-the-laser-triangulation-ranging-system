@@ -11,6 +11,7 @@ from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from . import __version__
+from .typography import BASE_FONT_POINT_SIZE, ResponsiveTypography
 from .ui import MainWindow
 
 APPLICATION_STYLE = """
@@ -290,11 +291,14 @@ def create_application(argv: Sequence[str] | None = None) -> QApplication:
     else:
         application = existing
     application.setStyle("Fusion")
-    application.setStyleSheet(APPLICATION_STYLE)
     font = QFont()
     font.setFamilies(["Malgun Gothic", "Segoe UI Variable", "Noto Sans CJK KR"])
-    font.setPointSize(11)
-    application.setFont(font)
+    font.setPointSizeF(BASE_FONT_POINT_SIZE)
+    typography = getattr(application, "_responsive_typography", None)
+    if not isinstance(typography, ResponsiveTypography):
+        typography = ResponsiveTypography(application, font, APPLICATION_STYLE)
+        application._responsive_typography = typography
+    typography.refresh(base_font=font, base_style=APPLICATION_STYLE)
     application.setAttribute(Qt.ApplicationAttribute.AA_DontShowIconsInMenus, False)
     icon = _load_application_icon()
     if not icon.isNull():

@@ -63,7 +63,7 @@ class MainWindow(QMainWindow):
         self._project_name = "새 프로젝트"
         self._dirty = False
         self._loading = False
-        self._latest_3d_payload: tuple[object, float, float, float] | None = None
+        self._latest_3d_snapshot: object | None = None
         self._settings = QSettings("Scheimpflug OptiMeter", "Scheimpflug OptiMeter")
 
         self.tabs = QTabWidget()
@@ -210,18 +210,14 @@ class MainWindow(QMainWindow):
 
     def _on_solution_changed(self, solution, snapshot) -> None:
         if solution is None or snapshot is None:
-            self._latest_3d_payload = None
+            self._latest_3d_snapshot = None
             self.sensor_comparison.display_metrics(
                 (),
                 selected_camera_id=None,
                 context_warning="입력 계산 오류로 센서 비교를 중단했습니다.",
             )
             if self.tabs.currentWidget() is self.three_d:
-                self.three_d.set_geometry(
-                    None,
-                    alpha_deg=0.0,
-                    beta_deg=0.0,
-                )
+                self.three_d.set_geometry(None)
             self._set_calculation_status(
                 "계산 오류 · 입력 패널의 오류 메시지를 확인하세요.",
                 "error",
@@ -237,18 +233,9 @@ class MainWindow(QMainWindow):
                 else None
             ),
         )
-        magnification = solution.fp_mm / solution.lo_mm if solution.lo_mm > 0.0 else 1.0
-        self._latest_3d_payload = (
-            snapshot,
-            solution.alpha_deg,
-            solution.beta_deg,
-            magnification,
-        )
+        self._latest_3d_snapshot = snapshot
         self.three_d.set_geometry(
             snapshot,
-            alpha_deg=solution.alpha_deg,
-            beta_deg=solution.beta_deg,
-            magnification=magnification,
             render=self.tabs.currentWidget() is self.three_d,
         )
         warning_count = len(solution.warnings)
@@ -283,16 +270,10 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, _index: int) -> None:
         if self.tabs.currentWidget() is not self.three_d:
             return
-        if self._latest_3d_payload is None:
-            self.three_d.set_geometry(None, alpha_deg=0.0, beta_deg=0.0)
+        if self._latest_3d_snapshot is None:
+            self.three_d.set_geometry(None)
             return
-        snapshot, alpha_deg, beta_deg, magnification = self._latest_3d_payload
-        self.three_d.set_geometry(
-            snapshot,
-            alpha_deg=alpha_deg,
-            beta_deg=beta_deg,
-            magnification=magnification,
-        )
+        self.three_d.set_geometry(self._latest_3d_snapshot)
 
     def current_document(self) -> ProjectDocument:
         values = self.design.project_input()

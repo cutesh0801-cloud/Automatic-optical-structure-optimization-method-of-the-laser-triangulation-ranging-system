@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError
 from importlib.resources import files
 
@@ -17,7 +19,6 @@ from scheimpflug_optimeter.models import (
 from scheimpflug_optimeter.optics import (
     OpticalInputError,
     build_scene_geometry,
-    full_focus_angles,
     image_coordinate_mm,
     image_sensitivity,
     solve_alpha,
@@ -183,6 +184,57 @@ def test_all_complete_sanitized_workbook_vectors_regress_at_1e_9():
         assert case["input"]["sensor_length_mm"] is None
         with pytest.raises(OpticalInputError, match="source cell for L is missing"):
             solve_workbook_design(WorkbookDesignInput(**case["input"]))
+
+
+def test_workbook_path_defers_scipy_until_solve_alpha_is_called():
+    script = """
+import json
+import math
+import sys
+
+from scheimpflug_optimeter.models import WorkbookDesignInput
+from scheimpflug_optimeter.optics import solve_alpha, solve_workbook_design
+
+solution = solve_workbook_design(WorkbookDesignInput(205.0, 100.0, 5.4378, 14.27))
+before = {
+    "numpy": "numpy" in sys.modules,
+    "scipy": "scipy" in sys.modules,
+    "scipy_optimize": "scipy.optimize" in sys.modules,
+}
+alpha_deg = solve_alpha(12.0, 205.0)
+alpha = math.radians(alpha_deg)
+after = {
+    "numpy": "numpy" in sys.modules,
+    "scipy": "scipy" in sys.modules,
+    "scipy_optimize": "scipy.optimize" in sys.modules,
+}
+print(json.dumps({
+    "before": before,
+    "after": after,
+    "focal_length_mm": solution.focal_length_mm,
+    "residual": math.sin(alpha) ** 2 * math.cos(alpha) - 12.0 / 205.0,
+}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["before"] == {
+        "numpy": False,
+        "scipy": False,
+        "scipy_optimize": False,
+    }
+    assert result["after"] == {
+        "numpy": True,
+        "scipy": True,
+        "scipy_optimize": True,
+    }
+    assert result["focal_length_mm"] == pytest.approx(12.0710999982, rel=1e-10)
+    assert result["residual"] == pytest.approx(0.0, abs=1e-14)
 
 
 @pytest.mark.parametrize(
@@ -375,23 +427,3 @@ def test_canonical_invalid_constraints_are_explicit_and_geometry_is_not_stale():
     assert "non_positive_near_distance" in codes
     assert "angle_sum_limit" in codes
     assert "sensor_length" in codes or "range_mapping_singular" in codes
-
-
-def test_exact_full_focus_angles_follow_2025_equations():
-    magnification = 0.42
-    alpha_deg = 14.0
-    beta_deg = 8.0
-    gamma_deg, delta_deg = full_focus_angles(magnification, alpha_deg, beta_deg)
-    gamma = math.radians(gamma_deg)
-    delta = math.radians(delta_deg)
-
-    assert math.tan(gamma) == pytest.approx(
-        magnification * math.tan(math.radians(alpha_deg)), rel=1e-12
-    )
-    assert math.tan(delta) == pytest.approx(
-        magnification
-        * math.cos(gamma)
-        / math.cos(math.radians(alpha_deg))
-        * math.tan(math.radians(beta_deg)),
-        rel=1e-12,
-    )

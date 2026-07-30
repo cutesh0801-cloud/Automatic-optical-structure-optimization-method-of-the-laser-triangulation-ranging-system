@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import replace
 from time import perf_counter
 
@@ -12,7 +11,6 @@ from scheimpflug_optimeter.ui.scene import (
     Point2D,
     SceneSnapshot,
 )
-from scheimpflug_optimeter.ui.three_d import full_focus_angles
 
 
 def snapshot(*, valid: bool = True) -> SceneSnapshot:
@@ -412,26 +410,6 @@ def test_scene_snapshot_update_p95_is_below_100_ms(qtbot):
 
     percentile_95 = sorted(durations)[int(len(durations) * 0.95) - 1]
     assert percentile_95 < 0.100
-
-
-def test_exact_full_focus_angles_match_equations():
-    magnification = 0.42
-    alpha_deg = 14.0
-    beta_deg = 8.0
-
-    gamma_deg, delta_deg = full_focus_angles(
-        magnification,
-        alpha_deg,
-        beta_deg,
-    )
-
-    alpha = math.radians(alpha_deg)
-    gamma = math.radians(gamma_deg)
-    delta = math.radians(delta_deg)
-    assert math.tan(gamma) == pytest_approx(magnification * math.tan(alpha))
-    assert math.tan(delta) == pytest_approx(
-        magnification * (math.cos(gamma) / math.cos(alpha)) * math.tan(math.radians(beta_deg))
-    )
 
 
 def pytest_approx(value):
