@@ -95,8 +95,6 @@ def workbook_snapshot() -> SceneSnapshot:
         lo_mm=57.0,
         fp_mm=14.0,
         focal_length_mm=11.2,
-        range_label="레이저 교차 거리 s",
-        target_nominal_label="워크북 기준면",
         workbook_mode=True,
     )
 
@@ -116,7 +114,7 @@ def fitted_scene(qtbot, value: SceneSnapshot):
 
 def assert_callouts_do_not_cover_each_other_or_key_lines(scene, view):
     rects = scene.visible_callout_rects()
-    assert len(rects) >= 12
+    assert set(rects) == set(scene.PRIMARY_CALLOUTS)
     viewport = view.viewport().rect().adjusted(5, 5, -5, -5)
     for name, rect in rects.items():
         assert viewport.contains(rect.toAlignedRect()), name
@@ -133,11 +131,13 @@ def assert_callouts_do_not_cover_each_other_or_key_lines(scene, view):
 
     transform, _, _ = scene._layout_transform()
     obstacles = scene._geometry_obstacles(transform)
+    fixed_obstacles = scene._fixed_item_obstacles(transform)
     for name, rect in rects.items():
         assert not any(
             scene._line_intersects_rect(line, rect.adjusted(-2.0, -2.0, 2.0, 2.0))
             for line in obstacles
         ), name
+        assert not any(rect.intersects(obstacle) for obstacle in fixed_obstacles), name
 
 
 def test_scene_updates_reusable_items_and_required_labels(qtbot, tmp_path):
@@ -163,20 +163,31 @@ def test_scene_updates_reusable_items_and_required_labels(qtbot, tmp_path):
 
     assert {name: id(getattr(scene, name)) for name in line_ids} == line_ids
     texts = " ".join(label.text() for label in scene.labels.values())
-    assert "레이저 조사 직선" in texts
     assert "WD d" in texts
-    assert "근거리" in texts
-    assert "기준거리" in texts
-    assert "원거리" in texts
+    assert "측정 범위 S" in texts
     assert "렌즈 평면" in texts
-    assert "실제 이미지/센서 평면" in texts
-    assert "Scheimpflug 교점" in texts
-    assert "W =" in texts
-    assert "R =" in texts
-    assert "↗" in scene.labels["scheimpflug"].text()
-    assert "범례" in scene.labels["legend"].text()
+    assert "요청 범위의 설계 결상 구간" in texts
+    assert "Scheimpflug" in texts
+    assert "광학 외곽 W" in texts
+    assert "후방 외곽 R" in texts
+    assert "↓" in scene.labels["scheimpflug"].text()
+    assert "아래 계속" in scene.labels["scheimpflug"].text()
+    assert set(scene._callout_specs) == set(scene.PRIMARY_CALLOUTS)
+    assert set(scene.labels) == {*scene.PRIMARY_CALLOUTS, "invalid"}
     assert scene.scheimpflug_remote_arrow.isVisible()
     assert not scene.scheimpflug_marker.isVisible()
+    assert scene.proxy_sensor_line.isVisible()
+    assert "I±L/2" in scene.proxy_sensor_line.toolTip()
+    assert "lo = 58.300 mm" in scene.labels["lens"].toolTip()
+    assert "fp = 15.300 mm" in scene.labels["lens"].toolTip()
+    assert "f = 12.000 mm" in scene.labels["lens"].toolTip()
+    for glyph in (
+        scene.laser_emitter_glyph,
+        scene.lens_glyph,
+        scene.camera_body_glyph,
+    ):
+        assert glyph.isVisible()
+        assert "개념 표시" in glyph.toolTip()
     assert all(
         arrow.isVisible() and arrow.line().length() > 0.0
         for arrows in scene.dimension_arrowheads.values()
@@ -283,6 +294,17 @@ def test_remote_geometry_is_ray_clipped_without_expanding_the_scene(qtbot):
     assert scene.sceneRect().height() < 500.0
     assert scene.range_remote_arrow.isVisible()
     assert scene.scheimpflug_remote_arrow.isVisible()
+    assert not scene.proxy_sensor_line.isVisible()
+    assert "워크북 WD 파라미터 d = 205.000 mm" in scene.labels["wd"].text()
+    assert "R=V−d" in scene.labels["wd"].toolTip()
+    assert "광선 교차 거리 |s|" in scene.labels["range"].text()
+    assert "아래 계속 ↓" in scene.labels["range"].text()
+    assert "왼쪽 계속 ←" in scene.labels["scheimpflug"].text()
+    assert scene.labels["sensor"].text() == "입력 이미지/센서 구간 L"
+    assert "W=b+L/2" in scene.labels["w"].text()
+    assert "R=V−d" in scene.labels["r"].text()
+    assert "-1165.000 mm" in scene.labels["range"].toolTip()
+    assert "-1200.000 mm" in scene.labels["scheimpflug"].toolTip()
     for arrow in (scene.range_remote_arrow, scene.scheimpflug_remote_arrow):
         point = arrow.scenePos()
         rect = scene.sceneRect()
@@ -304,6 +326,45 @@ def test_remote_geometry_is_ray_clipped_without_expanding_the_scene(qtbot):
     assert scene.scheimpflug_marker.pos().y() == pytest_approx(-local_intersection.z_mm)
 
 
+def test_remote_classification_uses_local_working_area_in_canonical_mode(qtbot):
+    value = snapshot()
+    remote = Point2D(0.0, -5000.0)
+    far_ray = value.chief_rays[1]
+    scene, view = fitted_scene(
+        qtbot,
+        replace(
+            value,
+            laser_endpoints=(value.emitter, remote),
+            target_far=remote,
+            range_endpoints=(value.target_nominal, remote),
+            chief_rays=(
+                value.chief_rays[0],
+                (remote, far_ray[1], far_ray[2]),
+            ),
+            measurement_range_mm=5200.0,
+        ),
+    )
+
+    assert scene.sceneRect().height() < 500.0
+    assert scene.range_remote_arrow.isVisible()
+    assert "아래 계속 ↓" in scene.labels["range"].text()
+    lens_device = view.mapFromScene(QPointF(value.lens_center.x_mm, -value.lens_center.z_mm))
+    sensor_device = view.mapFromScene(QPointF(value.image_center.x_mm, -value.image_center.z_mm))
+    assert QLineF(lens_device, sensor_device).length() > 20.0
+
+
+def test_remote_direction_text_follows_the_actual_vector():
+    origin = Point2D(10.0, 20.0)
+    cases = (
+        (Point2D(100.0, 21.0), ("→", "오른쪽")),
+        (Point2D(-100.0, 21.0), ("←", "왼쪽")),
+        (Point2D(11.0, 100.0), ("↑", "위")),
+        (Point2D(11.0, -100.0), ("↓", "아래")),
+    )
+    for target, expected in cases:
+        assert OpticsGraphicsScene._remote_direction(origin, target) == expected
+
+
 def test_zoomed_out_key_geometry_keeps_minimum_screen_presence(qtbot):
     scene, view = fitted_scene(qtbot, snapshot())
     physical_lines = {
@@ -312,6 +373,18 @@ def test_zoomed_out_key_geometry_keeps_minimum_screen_presence(qtbot):
         "sensor": QLineF(scene.sensor_line.line()),
     }
 
+    def device_rect(item):
+        transform = item.deviceTransform(view.viewportTransform())
+        return transform.mapRect(item.boundingRect())
+
+    glyph_rects_before = {
+        name: device_rect(getattr(scene, name))
+        for name in (
+            "laser_emitter_glyph",
+            "lens_glyph",
+            "camera_body_glyph",
+        )
+    }
     view.resetTransform()
     view.scale(0.02, 0.02)
     scene.relayout_labels()
@@ -329,6 +402,10 @@ def test_zoomed_out_key_geometry_keeps_minimum_screen_presence(qtbot):
     assert device_line_length(scene.sensor_line) < 1.0
     assert device_line_length(scene.lens_plane_marker) == pytest_approx(20.0)
     assert device_line_length(scene.sensor_plane_marker) == pytest_approx(24.0)
+    for name, before in glyph_rects_before.items():
+        after = device_rect(getattr(scene, name))
+        assert after.width() == pytest_approx(before.width())
+        assert after.height() == pytest_approx(before.height())
 
     emitter_transform = scene.emitter_marker.deviceTransform(view.viewportTransform())
     emitter_rect = emitter_transform.mapRect(scene.emitter_marker.rect())
@@ -368,7 +445,7 @@ def test_equal_scale_minimum_size_and_scroll_relayout(qtbot):
     assert transform.m21() == pytest_approx(0.0)
     assert view.minimumWidth() == 400
     assert view.minimumHeight() == 360
-    assert all(scene.labels[name].font().pointSizeF() >= 10.5 for name in scene._callout_names)
+    assert all(scene.labels[name].font().pointSizeF() >= 11.5 for name in scene._callout_names)
 
     view.scale(1.2, 1.2)
     qtbot.wait(1)

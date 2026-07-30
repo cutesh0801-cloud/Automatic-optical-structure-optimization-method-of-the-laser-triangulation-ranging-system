@@ -17,6 +17,21 @@ unchanged.
   3D canvas so geometry remains readable while rotating and zooming.
 - Made the desktop and 2D-scene typography respond continuously to the window
   and viewport size instead of using one enlarged fixed font.
+- Reduced the 2D canvas to seven primary callouts, moved the color key into the
+  toolbar and kept remote ray/Scheimpflug intersections from collapsing the
+  working-area scale.
+- Added zoom-independent schematic laser, lens and camera cues, boundary
+  direction markers for remote geometry and mode-specific workbook/canonical
+  terminology.
+- Reworked the formula card into compact tagged equation rows with concise
+  variable hints and full definitions in accessible tooltips.
+- Kept the result names and values readable at 1280×720 by removing nested
+  scrolling and allocating the columns from measured content width.
+- Clarified that the workbook display reports the non-negative ray-intersection
+  distance `|s|`, while the saved calculation value retains its directional
+  sign.
+- Replaced the folder-based portable bundle with a directly downloadable
+  PyInstaller single-file Windows executable and matching SHA-256 file.
 - Deferred NumPy/Matplotlib until the 3D tab is opened and SciPy until a
   canonical root solve or optimization actually needs it; the default
   workbook screen no longer pays for unused numerical stacks.

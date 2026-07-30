@@ -250,14 +250,14 @@ class MainWindow(QMainWindow):
             status_state = "valid"
         if solution.mode.value == "workbook":
             ray_intercept = (
-                f"{solution.ray_intercept_s_mm:.3f} mm"
+                f"{abs(solution.ray_intercept_s_mm):.3f} mm"
                 if solution.ray_intercept_s_mm is not None
                 else "계산 불가"
             )
             self._set_calculation_status(
                 f"워크북 {state} · W={solution.width_exact_mm:.3f} mm · "
                 f"R={solution.rear_exact_mm:.3f} mm · "
-                f"s={ray_intercept}",
+                f"|s|={ray_intercept}",
                 status_state,
             )
         else:

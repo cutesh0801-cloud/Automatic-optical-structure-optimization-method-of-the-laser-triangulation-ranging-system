@@ -66,18 +66,17 @@ py -3.12 -m venv .venv
 [`examples/acA1300-60gm-12mm.scheimpflug.json`](examples/acA1300-60gm-12mm.scheimpflug.json)
 샘플 프로젝트를 사용할 수 있습니다.
 
-## Windows 포터블 ZIP
+## Windows 단일 실행 파일
 
-GitHub Release의 `Scheimpflug-OptiMeter-windows-x64.zip`을 내려받아
-전체 폴더를 압축 해제한 다음 `Scheimpflug-OptiMeter.exe`를 실행합니다.
-`_internal` 폴더는 실행 파일과 같은 위치에 그대로 두어야 합니다.
-Python이나 별도 장치 SDK·드라이버를 설치할 필요가 없습니다.
+GitHub Release의 `Scheimpflug-OptiMeter-windows-x64.exe`를 내려받아
+그대로 실행합니다. 압축 해제나 `_internal` 폴더가 필요하지 않으며,
+Python이나 별도 장치 SDK·드라이버도 설치하지 않습니다.
 
-릴리스에는 사용자 설명서, 정적 규격 문서, 샘플 프로젝트와 ZIP의
-SHA-256 파일이 포함됩니다. 압축 내부 `build-info.json`에는 제품 버전,
-고유 유지보수 태그와 정확한 Git 커밋이 기록됩니다. 자동 빌드 실행 파일은
-코드 서명되지 않을 수 있으므로 배포 파일 사용 전 동봉된 SHA-256 값을
-확인하십시오.
+단일 파일 패키지는 시작할 때 필요한 구성요소를 임시 폴더에 푸는 방식이라
+첫 실행이 개발 환경보다 다소 느릴 수 있습니다. 릴리스에 함께 제공되는
+`Scheimpflug-OptiMeter-windows-x64.exe.sha256`으로 실행 파일의
+SHA-256을 확인할 수 있습니다. 자동 빌드 실행 파일은 코드 서명되지 않을
+수 있으므로 Windows 보안 경고에서 게시자와 체크섬을 확인하십시오.
 
 제품 버전은 대형 업데이트를 충분히 검토한 경우에만 신중하게 갱신합니다.
 일상적인 수정과 소규모 기능도 릴리스에서 제외하지 않습니다. 이러한 변경은

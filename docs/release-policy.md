@@ -106,16 +106,16 @@ Do not enter the confirmation phrase until every item is complete:
 3. Runtime-visible version values and packaging metadata have been checked
    against `project.version`.
 4. CI is green for the release commit, including lint, formatting, automated
-   tests, public-source verification, Windows packaging, and portable smoke
-   testing where available.
+   tests, public-source verification, Windows single-file packaging, and
+   executable smoke testing.
 5. User-visible behavior, known limitations, upgrade impact, and generated
    release notes have been reviewed.
 6. No private PDF, workbook, proprietary drawing, local path, credential, or
    machine-specific file is tracked or included in the package.
 7. The proposed tag and GitHub release do not already exist.
 8. The two generated assets have stable names:
-   `Scheimpflug-OptiMeter-windows-x64.zip` and
-   `Scheimpflug-OptiMeter-windows-x64.zip.sha256`.
+   `Scheimpflug-OptiMeter-windows-x64.exe` and
+   `Scheimpflug-OptiMeter-windows-x64.exe.sha256`.
 9. GitHub's Immutable Releases setting is enabled when an administrator can
    configure it, or the missing administrator follow-up is explicitly
    recorded.
@@ -141,9 +141,9 @@ pipeline:
 2. verify no private source documents are tracked;
 3. run Ruff lint and formatting checks;
 4. run the test suite with the Qt and Matplotlib headless backends;
-5. build the PyInstaller application;
-6. smoke-test the portable application;
-7. assemble the ZIP and SHA-256 assets; and
+5. build the PyInstaller single-file Windows executable;
+6. smoke-test the executable from its build output;
+7. copy it to the stable release name and generate its SHA-256 asset;
 8. create a new GitHub release and tag at the selected commit;
 9. verify the published tag target, draft/prerelease state, and the exact
    names, byte sizes, upload state, and server SHA-256 digest of both assets.

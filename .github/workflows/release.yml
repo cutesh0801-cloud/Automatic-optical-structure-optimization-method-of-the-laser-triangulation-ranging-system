@@ -238,18 +238,16 @@ jobs:
         run: uv run --frozen pytest
       - name: Build
         run: uv run --frozen pyinstaller --noconfirm packaging/scheimpflug_optimeter.spec
-      - name: Smoke portable application
+      - name: Smoke Windows executable
         shell: pwsh
         run: >
           powershell.exe -NoProfile -ExecutionPolicy Bypass
-          -File packaging/smoke_portable.ps1
-      - name: Assemble portable archive
+          -File packaging/smoke_single_exe.ps1
+      - name: Assemble release executable and checksum
         shell: pwsh
-        env:
-          SCHEIMPFLUG_RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: >
           powershell.exe -NoProfile -ExecutionPolicy Bypass
-          -File packaging/assemble_portable.ps1
+          -File packaging/assemble_single_exe.ps1
       - name: Publish append-only release
         shell: pwsh
         env:
@@ -284,8 +282,8 @@ jobs:
 
           $arguments = @(
               "release", "create", $env:RELEASE_TAG,
-              "Scheimpflug-OptiMeter-windows-x64.zip",
-              "Scheimpflug-OptiMeter-windows-x64.zip.sha256",
+              "Scheimpflug-OptiMeter-windows-x64.exe",
+              "Scheimpflug-OptiMeter-windows-x64.exe.sha256",
               "--generate-notes",
               "--title", $env:RELEASE_TITLE,
               "--target", $env:GITHUB_SHA
@@ -353,12 +351,12 @@ jobs:
 
           $expectedAssets = @(
               @{
-                  Name = "Scheimpflug-OptiMeter-windows-x64.zip"
-                  Path = "Scheimpflug-OptiMeter-windows-x64.zip"
+                  Name = "Scheimpflug-OptiMeter-windows-x64.exe"
+                  Path = "Scheimpflug-OptiMeter-windows-x64.exe"
               },
               @{
-                  Name = "Scheimpflug-OptiMeter-windows-x64.zip.sha256"
-                  Path = "Scheimpflug-OptiMeter-windows-x64.zip.sha256"
+                  Name = "Scheimpflug-OptiMeter-windows-x64.exe.sha256"
+                  Path = "Scheimpflug-OptiMeter-windows-x64.exe.sha256"
               }
           )
           $remoteAssets = @($release.assets)

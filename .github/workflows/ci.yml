@@ -54,22 +54,22 @@ jobs:
         run: >
           powershell.exe -NoProfile -ExecutionPolicy Bypass
           -File packaging/verify_public_sources.ps1
-      - name: Build portable application
+      - name: Build Windows single-file executable
         run: uv run --frozen pyinstaller --noconfirm packaging/scheimpflug_optimeter.spec
-      - name: Smoke portable application
+      - name: Smoke Windows executable
         shell: pwsh
         run: >
           powershell.exe -NoProfile -ExecutionPolicy Bypass
-          -File packaging/smoke_portable.ps1
-      - name: Assemble portable archive
+          -File packaging/smoke_single_exe.ps1
+      - name: Assemble release executable and checksum
         shell: pwsh
         run: >
           powershell.exe -NoProfile -ExecutionPolicy Bypass
-          -File packaging/assemble_portable.ps1
+          -File packaging/assemble_single_exe.ps1
       - uses: actions/upload-artifact@v7
         with:
           name: Scheimpflug-OptiMeter-windows-x64
           path: |
-            Scheimpflug-OptiMeter-windows-x64.zip
-            Scheimpflug-OptiMeter-windows-x64.zip.sha256
+            Scheimpflug-OptiMeter-windows-x64.exe
+            Scheimpflug-OptiMeter-windows-x64.exe.sha256
           if-no-files-found: error

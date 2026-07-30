@@ -60,8 +60,6 @@ class SceneSnapshot:
     focal_length_mm: float
     valid: bool = True
     warnings: tuple[str, ...] = field(default_factory=tuple)
-    range_label: str = "측정 범위 S"
-    target_nominal_label: str = "기준거리"
     workbook_mode: bool = False
 
 
@@ -101,6 +99,16 @@ def _bounds(points: Iterable[Point2D]) -> QRectF:
 
 class OpticsGraphicsScene(QGraphicsScene):
     """A graphics scene that updates existing items instead of rebuilding them."""
+
+    PRIMARY_CALLOUTS = (
+        "wd",
+        "range",
+        "w",
+        "r",
+        "scheimpflug",
+        "lens",
+        "sensor",
+    )
 
     COLORS = {
         "background": QColor("#10151d"),
@@ -152,6 +160,51 @@ class OpticsGraphicsScene(QGraphicsScene):
         self.scheimpflug_marker = self._marker("warning", 4.5)
         self.lens_plane_marker = self._screen_plane_marker("lens", 10.0, 5.2)
         self.sensor_plane_marker = self._screen_plane_marker("sensor", 12.0, 5.4)
+        self.laser_emitter_glyph = self._schematic_glyph(
+            "laser",
+            (
+                (-24.0, -8.0),
+                (-5.0, -8.0),
+                (0.0, -4.0),
+                (0.0, 4.0),
+                (-5.0, 8.0),
+                (-24.0, 8.0),
+            ),
+        )
+        self.lens_glyph = self._schematic_glyph(
+            "lens",
+            (
+                (-12.0, 0.0),
+                (-9.0, -4.0),
+                (0.0, -6.0),
+                (9.0, -4.0),
+                (12.0, 0.0),
+                (9.0, 4.0),
+                (0.0, 6.0),
+                (-9.0, 4.0),
+            ),
+        )
+        self.camera_body_glyph = self._schematic_glyph(
+            "axis",
+            (
+                (-28.0, -13.0),
+                (-5.0, -13.0),
+                (0.0, -9.0),
+                (0.0, 9.0),
+                (-5.0, 13.0),
+                (-28.0, 13.0),
+            ),
+        )
+        self.laser_emitter_glyph.setToolTip("레이저 발광기 개념 표시 · 실제 외형 치수가 아닙니다.")
+        self.lens_glyph.setToolTip("렌즈 개념 표시 · 실제 외형 치수가 아닙니다.")
+        self.camera_body_glyph.setToolTip("카메라 본체 개념 표시 · 실제 외형 치수가 아닙니다.")
+        self.optical_axis_line.setToolTip("수광 광축")
+        self.target_near_line.setToolTip("요청 범위의 근거리 대상 위치")
+        self.target_nominal_line.setToolTip("기준 대상 위치")
+        self.target_far_line.setToolTip("요청 범위의 원거리 대상 위치")
+        self.proxy_sensor_line.setToolTip(
+            "중심 대칭 패키지 근사 I±L/2 · 실제 결상 구간과 구분한 참고선"
+        )
         self.range_remote_arrow = self._remote_arrow("dimension")
         self.scheimpflug_remote_arrow = self._remote_arrow("warning")
         self.range_remote_arrow.setVisible(False)
@@ -164,31 +217,12 @@ class OpticsGraphicsScene(QGraphicsScene):
         self.invalid_overlay.setBrush(Qt.BrushStyle.NoBrush)
         self.addItem(self.invalid_overlay)
 
-        self.labels = {
-            name: self._text()
-            for name in (
-                "laser",
-                "near",
-                "nominal",
-                "far",
-                "lens",
-                "sensor",
-                "proxy",
-                "axis",
-                "scheimpflug",
-                "wd",
-                "range",
-                "w",
-                "r",
-                "distances",
-                "legend",
-                "invalid",
-            )
-        }
-        self._callout_names = tuple(name for name in self.labels if name != "invalid")
+        self.labels = {name: self._text() for name in (*self.PRIMARY_CALLOUTS, "invalid")}
+        self._callout_names = self.PRIMARY_CALLOUTS
         for name in self._callout_names:
             callout_font = QFont(self.labels[name].font())
-            callout_font.setPointSizeF(10.5)
+            callout_font.setPointSizeF(11.5)
+            callout_font.setWeight(QFont.Weight.Medium)
             self.labels[name].setFont(callout_font)
         self.label_backgrounds = {name: self._callout_background() for name in self._callout_names}
         self.label_leaders = {name: self._line("muted", 1.0) for name in self._callout_names}
@@ -238,6 +272,9 @@ class OpticsGraphicsScene(QGraphicsScene):
             item.setZValue(30.0)
         self.lens_plane_marker.setZValue(31.0)
         self.sensor_plane_marker.setZValue(32.0)
+        self.laser_emitter_glyph.setZValue(19.0)
+        self.camera_body_glyph.setZValue(16.0)
+        self.lens_glyph.setZValue(23.0)
 
         for item in self.items():
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
@@ -288,6 +325,26 @@ class OpticsGraphicsScene(QGraphicsScene):
         pen.setCosmetic(True)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         item.setPen(pen)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.addItem(item)
+        return item
+
+    def _schematic_glyph(
+        self,
+        color: str,
+        vertices: tuple[tuple[float, float], ...],
+    ) -> QGraphicsPolygonItem:
+        """Create a fixed-screen-size device cue, not a physical outline."""
+
+        item = QGraphicsPolygonItem(QPolygonF(tuple(QPointF(x, y) for x, y in vertices)))
+        outline = QColor(self.COLORS[color])
+        pen = QPen(outline, 1.5)
+        pen.setCosmetic(True)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        item.setPen(pen)
+        fill = QColor(outline)
+        fill.setAlpha(45)
+        item.setBrush(fill)
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self.addItem(item)
         return item
@@ -357,7 +414,7 @@ class OpticsGraphicsScene(QGraphicsScene):
 
     @staticmethod
     def _position_screen_plane(
-        item: QGraphicsLineItem,
+        item: QGraphicsItem,
         endpoints: tuple[Point2D, Point2D],
     ) -> None:
         """Anchor a fixed-size glyph at a physical plane's centre and angle."""
@@ -373,6 +430,19 @@ class OpticsGraphicsScene(QGraphicsScene):
                 )
             )
         )
+
+    @staticmethod
+    def _position_oriented_glyph(
+        item: QGraphicsItem,
+        anchor: Point2D,
+        toward: Point2D,
+    ) -> None:
+        """Anchor a schematic cue and point its local +X axis toward a datum."""
+
+        start = _scene_point(anchor)
+        end = _scene_point(toward)
+        item.setPos(start)
+        item.setRotation(math.degrees(math.atan2(end.y() - start.y(), end.x() - start.x())))
 
     def _set_dimension(
         self,
@@ -476,6 +546,39 @@ class OpticsGraphicsScene(QGraphicsScene):
         direction_y = -(target.z_mm - origin.z_mm)
         item.setRotation(math.degrees(math.atan2(direction_y, direction_x)))
         item.setVisible(True)
+
+    @staticmethod
+    def _remote_direction(origin: Point2D, target: Point2D) -> tuple[str, str]:
+        """Return the dominant on-screen cardinal direction for remote geometry."""
+
+        delta_x = target.x_mm - origin.x_mm
+        delta_z = target.z_mm - origin.z_mm
+        if abs(delta_x) >= abs(delta_z):
+            return ("→", "오른쪽") if delta_x >= 0.0 else ("←", "왼쪽")
+        return ("↑", "위") if delta_z >= 0.0 else ("↓", "아래")
+
+    @staticmethod
+    def _remote_label_preferences(symbol: str) -> tuple[str, ...]:
+        """Prefer callout slots inward from the viewport edge."""
+
+        return {
+            "→": ("w", "nw", "sw", "n", "s"),
+            "←": ("e", "ne", "se", "n", "s"),
+            "↑": ("s", "se", "sw", "e", "w"),
+            "↓": ("n", "ne", "nw", "e", "w"),
+        }[symbol]
+
+    @staticmethod
+    def _point_is_remote(point: Point2D, local_bounds: QRectF, factor: float = 2.0) -> bool:
+        """Classify an outlier without allowing it to expand the local bounds."""
+
+        center = local_bounds.center()
+        characteristic = max(local_bounds.width(), local_bounds.height(), 1.0)
+        distance = math.hypot(
+            point.x_mm - center.x(),
+            -point.z_mm - center.y(),
+        )
+        return distance > factor * characteristic
 
     def _queue_callout(
         self,
@@ -606,6 +709,26 @@ class OpticsGraphicsScene(QGraphicsScene):
             result.append(QLineF(transform.map(line.p1()), transform.map(line.p2())))
         return tuple(result)
 
+    def _fixed_item_obstacles(self, transform: object) -> tuple[QRectF, ...]:
+        """Return padded device-space bounds for the schematic device cues."""
+
+        items = (
+            self.laser_emitter_glyph,
+            self.lens_glyph,
+            self.camera_body_glyph,
+            self.lens_plane_marker,
+            self.sensor_plane_marker,
+            self.range_remote_arrow,
+            self.scheimpflug_remote_arrow,
+        )
+        return tuple(
+            item.deviceTransform(transform)
+            .mapRect(item.boundingRect())
+            .adjusted(-4.0, -4.0, 4.0, 4.0)
+            for item in items
+            if item.isVisible()
+        )
+
     def _callout_score(
         self,
         candidate: QRectF,
@@ -685,26 +808,9 @@ class OpticsGraphicsScene(QGraphicsScene):
             return
         transform, inverse, viewport_rect = self._layout_transform()
         obstacles = self._geometry_obstacles(transform)
-        placed: list[QRectF] = []
+        placed: list[QRectF] = list(self._fixed_item_obstacles(transform))
 
-        priority = (
-            "legend",
-            "distances",
-            "wd",
-            "range",
-            "w",
-            "r",
-            "scheimpflug",
-            "sensor",
-            "lens",
-            "axis",
-            "proxy",
-            "laser",
-            "nominal",
-            "near",
-            "far",
-        )
-        for name in priority:
+        for name in self._callout_names:
             label = self.labels[name]
             background = self.label_backgrounds[name]
             leader = self.label_leaders[name]
@@ -772,12 +878,8 @@ class OpticsGraphicsScene(QGraphicsScene):
         self,
         snapshot: SceneSnapshot,
         scene_rect: QRectF,
-        visible_laser_start: Point2D,
-        visible_laser_end: Point2D,
-        visible_targets: tuple[Point2D, Point2D, Point2D],
         visible_range_endpoints: tuple[Point2D, Point2D],
         *,
-        targets_distinct: bool,
         range_is_remote: bool,
         intersection_is_remote: bool,
         dimension_x: float,
@@ -787,91 +889,40 @@ class OpticsGraphicsScene(QGraphicsScene):
         """Create readable callout requests after all physical lines are in place."""
 
         label_colors = {
-            "laser": "laser",
-            "near": "target",
-            "nominal": "target",
-            "far": "target",
             "lens": "lens",
             "sensor": "sensor",
-            "proxy": "proxy",
-            "axis": "axis",
             "scheimpflug": "warning",
             "wd": "dimension",
             "range": "dimension",
             "w": "dimension",
             "r": "dimension",
-            "distances": "text",
-            "legend": "muted",
         }
         for name, color in label_colors.items():
             self.labels[name].setBrush(self.COLORS[color])
-
-        laser_midpoint = Point2D(
-            (visible_laser_start.x_mm + visible_laser_end.x_mm) / 2.0,
-            (visible_laser_start.z_mm + visible_laser_end.z_mm) / 2.0,
-        )
-        self._queue_callout(
-            "laser",
-            "레이저 조사 직선",
-            laser_midpoint,
-            preferred=("nw", "sw", "ne", "se"),
-        )
-        if targets_distinct:
-            self._queue_callout(
-                "near",
-                "근거리",
-                visible_targets[0],
-                preferred=("nw", "sw", "ne", "se"),
-            )
-            self._queue_callout(
-                "far",
-                "원거리",
-                visible_targets[2],
-                preferred=("sw", "nw", "se", "ne"),
-            )
-        self._queue_callout(
-            "nominal",
-            snapshot.target_nominal_label,
-            visible_targets[1],
-            preferred=("ne", "se", "nw", "sw"),
-        )
         self._queue_callout(
             "lens",
             "렌즈 평면",
             snapshot.lens_center,
             preferred=("nw", "sw", "ne", "se"),
         )
+        sensor_text = (
+            "입력 이미지/센서 구간 L" if snapshot.workbook_mode else "요청 범위의 설계 결상 구간"
+        )
         self._queue_callout(
             "sensor",
-            "실제 이미지/센서 평면",
+            sensor_text,
             snapshot.image_center,
             preferred=("ne", "se", "nw", "sw"),
         )
-        optical_axis_midpoint = Point2D(
-            (snapshot.optical_axis_endpoints[0].x_mm + snapshot.optical_axis_endpoints[1].x_mm)
-            / 2.0,
-            (snapshot.optical_axis_endpoints[0].z_mm + snapshot.optical_axis_endpoints[1].z_mm)
-            / 2.0,
+        self.labels["lens"].setToolTip(
+            "렌즈 평면의 정확한 mm 좌표 위에 고정 크기 개념 표시를 겹쳐 표시합니다.\n"
+            f"물체 거리 lo = {snapshot.lo_mm:.3f} mm\n"
+            f"이미지 거리 fp = {snapshot.fp_mm:.3f} mm\n"
+            f"초점거리 f = {snapshot.focal_length_mm:.3f} mm"
         )
-        self._queue_callout(
-            "axis",
-            "수광 광축",
-            optical_axis_midpoint,
-            preferred=("se", "ne", "sw", "nw"),
+        self.labels["sensor"].setToolTip(
+            f"{sensor_text}\n카메라 외곽은 식별용 개념 표시이며 실제 치수가 아닙니다."
         )
-        if snapshot.proxy_sensor_endpoints is not None:
-            proxy_midpoint = Point2D(
-                (snapshot.proxy_sensor_endpoints[0].x_mm + snapshot.proxy_sensor_endpoints[1].x_mm)
-                / 2.0,
-                (snapshot.proxy_sensor_endpoints[0].z_mm + snapshot.proxy_sensor_endpoints[1].z_mm)
-                / 2.0,
-            )
-            self._queue_callout(
-                "proxy",
-                "중심 대칭 패키지 근사",
-                proxy_midpoint,
-                preferred=("se", "sw", "ne", "nw"),
-            )
 
         if snapshot.scheimpflug_point is not None:
             if intersection_is_remote:
@@ -887,20 +938,31 @@ class OpticsGraphicsScene(QGraphicsScene):
                     snapshot.lens_center,
                     snapshot.scheimpflug_point,
                 )
-                scheme_text = (
-                    "Scheimpflug 교점 ↗ 화면 밖\n"
-                    f"({snapshot.scheimpflug_point.x_mm:.2f}, "
-                    f"{snapshot.scheimpflug_point.z_mm:.2f}) mm"
+                direction_symbol, direction_word = self._remote_direction(
+                    snapshot.lens_center,
+                    snapshot.scheimpflug_point,
                 )
+                scheme_text = f"Scheimpflug · {direction_word} 계속 {direction_symbol}"
+                scheme_tooltip = (
+                    "화면 밖 Scheimpflug 교점\n"
+                    f"X = {snapshot.scheimpflug_point.x_mm:.3f} mm\n"
+                    f"Z = {snapshot.scheimpflug_point.z_mm:.3f} mm"
+                )
+                self.labels["scheimpflug"].setToolTip(scheme_tooltip)
+                self.scheimpflug_remote_arrow.setToolTip(scheme_tooltip)
                 self._queue_callout(
                     "scheimpflug",
                     scheme_text,
                     clipped,
-                    preferred=("sw", "nw", "se", "ne"),
+                    preferred=self._remote_label_preferences(direction_symbol),
                 )
             else:
                 self.scheimpflug_remote_arrow.setVisible(False)
                 self._position(self.scheimpflug_marker, snapshot.scheimpflug_point)
+                self.labels["scheimpflug"].setToolTip(
+                    f"X = {snapshot.scheimpflug_point.x_mm:.3f} mm\n"
+                    f"Z = {snapshot.scheimpflug_point.z_mm:.3f} mm"
+                )
                 self._queue_callout(
                     "scheimpflug",
                     "Scheimpflug 교점",
@@ -908,9 +970,19 @@ class OpticsGraphicsScene(QGraphicsScene):
                     preferred=("ne", "se", "nw", "sw"),
                 )
 
+        wd_text = (
+            f"워크북 WD 파라미터 d = {snapshot.working_distance_mm:.3f} mm"
+            if snapshot.workbook_mode
+            else f"WD d = {snapshot.working_distance_mm:.3f} mm"
+        )
+        self.labels["wd"].setToolTip(
+            "워크북 외곽식 R=V−d에 사용하는 입력 파라미터입니다."
+            if snapshot.workbook_mode
+            else "레이저 발광 기준점에서 대상 중심까지의 워킹 디스턴스입니다."
+        )
         self._queue_callout(
             "wd",
-            f"WD d = {snapshot.working_distance_mm:.3f} mm",
+            wd_text,
             Point2D(
                 dimension_x,
                 (
@@ -921,50 +993,60 @@ class OpticsGraphicsScene(QGraphicsScene):
             ),
             preferred=("w", "e", "nw", "sw"),
         )
-        range_suffix = " · 화면 밖 →" if range_is_remote else ""
+        range_anchor = Point2D(
+            range_x,
+            (visible_range_endpoints[0].z_mm + visible_range_endpoints[1].z_mm) / 2.0,
+        )
+        range_preferred = ("w", "e", "sw", "nw")
+        range_suffix = ""
+        range_name = "광선 교차 거리 |s|" if snapshot.workbook_mode else "측정 범위 S"
+        if range_is_remote:
+            direction_symbol, direction_word = self._remote_direction(
+                snapshot.range_endpoints[0],
+                snapshot.range_endpoints[1],
+            )
+            range_suffix = f" · {direction_word} 계속 {direction_symbol}"
+            range_anchor = visible_range_endpoints[1]
+            range_preferred = self._remote_label_preferences(direction_symbol)
+            range_tooltip = (
+                f"{range_name}\n"
+                f"끝점 X = {snapshot.range_endpoints[1].x_mm:.3f} mm\n"
+                f"끝점 Z = {snapshot.range_endpoints[1].z_mm:.3f} mm"
+            )
+            self.labels["range"].setToolTip(range_tooltip)
+            self.range_remote_arrow.setToolTip(range_tooltip)
+        else:
+            self.labels["range"].setToolTip(range_name)
         self._queue_callout(
             "range",
-            f"{snapshot.range_label} = {snapshot.measurement_range_mm:.3f} mm{range_suffix}",
-            Point2D(
-                range_x,
-                (visible_range_endpoints[0].z_mm + visible_range_endpoints[1].z_mm) / 2.0,
-            ),
-            preferred=("w", "e", "sw", "nw"),
+            f"{range_name} {snapshot.measurement_range_mm:.3f} mm{range_suffix}",
+            range_anchor,
+            preferred=range_preferred,
+        )
+        width_text = (
+            f"W=b+L/2 · {snapshot.w_mm:.3f} mm"
+            if snapshot.workbook_mode
+            else f"광학 외곽 W · {snapshot.w_mm:.3f} mm"
         )
         self._queue_callout(
             "w",
-            f"W = {snapshot.w_mm:.3f} mm",
+            width_text,
             Point2D(snapshot.w_mm / 2.0, bottom_z),
             preferred=("s", "n", "se", "sw"),
         )
+        rear_text = (
+            f"R=V−d · {snapshot.r_mm:.3f} mm"
+            if snapshot.workbook_mode
+            else f"후방 외곽 R · {snapshot.r_mm:.3f} mm"
+        )
         self._queue_callout(
             "r",
-            f"R = {snapshot.r_mm:.3f} mm",
+            rear_text,
             Point2D(
                 snapshot.lens_center.x_mm,
                 snapshot.target_nominal.z_mm - snapshot.r_mm / 2.0,
             ),
             preferred=("e", "w", "ne", "se"),
-        )
-        self._queue_callout(
-            "distances",
-            (
-                f"f = {snapshot.focal_length_mm:.3f} mm\n"
-                f"lo = {snapshot.lo_mm:.3f} mm\n"
-                f"fp = {snapshot.fp_mm:.3f} mm"
-            ),
-            snapshot.image_center,
-            preferred=("se", "ne", "sw", "nw"),
-        )
-        self._queue_callout(
-            "legend",
-            (
-                "범례  빨강: 레이저 · 노랑: 센서 · 보라: 결상광선\n"
-                "청록 ↔: 치수 · 주황 점선: 패키지 근사"
-            ),
-            Point2D(scene_rect.right(), -scene_rect.top()),
-            preferred=("sw", "w", "s"),
-            leader=False,
         )
 
     def set_snapshot(self, snapshot: SceneSnapshot | None) -> None:
@@ -984,33 +1066,20 @@ class OpticsGraphicsScene(QGraphicsScene):
 
         for item in self.items():
             item.setVisible(True)
+        for name in self._callout_names:
+            self.labels[name].setVisible(True)
+            self.labels[name].setToolTip("")
+            self.label_backgrounds[name].setVisible(False)
+            self.label_leaders[name].setVisible(False)
         self.range_remote_arrow.setVisible(False)
         self.scheimpflug_remote_arrow.setVisible(False)
-        self.proxy_sensor_line.setVisible(snapshot.proxy_sensor_endpoints is not None)
-        self.labels["proxy"].setVisible(snapshot.proxy_sensor_endpoints is not None)
+        proxy_is_visible = (
+            snapshot.proxy_sensor_endpoints is not None and not snapshot.workbook_mode
+        )
+        self.proxy_sensor_line.setVisible(proxy_is_visible)
         self.scheimpflug_marker.setVisible(snapshot.scheimpflug_point is not None)
         self.labels["scheimpflug"].setVisible(snapshot.scheimpflug_point is not None)
 
-        all_points = [
-            snapshot.emitter,
-            *snapshot.laser_endpoints,
-            snapshot.target_near,
-            snapshot.target_nominal,
-            snapshot.target_far,
-            *snapshot.working_distance_endpoints,
-            snapshot.lens_center,
-            *snapshot.lens_endpoints,
-            snapshot.image_center,
-            *snapshot.sensor_endpoints,
-            *snapshot.optical_axis_endpoints,
-        ]
-        for ray in snapshot.chief_rays:
-            all_points.extend(ray)
-        if snapshot.proxy_sensor_endpoints:
-            all_points.extend(snapshot.proxy_sensor_endpoints)
-        if snapshot.workbook_mode:
-            # Workbook ``s`` may be far below the useful head/WD geometry.
-            all_points = [point for point in all_points if point != snapshot.target_far]
         envelope_bottom_z = (
             min(
                 snapshot.emitter.z_mm,
@@ -1018,42 +1087,62 @@ class OpticsGraphicsScene(QGraphicsScene):
             )
             - 5.0
         )
-        all_points.extend(
-            (
-                Point2D(snapshot.w_mm, envelope_bottom_z),
-                Point2D(
-                    snapshot.lens_center.x_mm,
-                    snapshot.target_nominal.z_mm - snapshot.r_mm,
-                ),
-            )
-        )
+        core_points = [
+            snapshot.emitter,
+            snapshot.laser_endpoints[0],
+            snapshot.target_nominal,
+            *snapshot.working_distance_endpoints,
+            snapshot.lens_center,
+            *snapshot.lens_endpoints,
+            snapshot.image_center,
+            *snapshot.sensor_endpoints,
+            *snapshot.optical_axis_endpoints,
+            Point2D(snapshot.w_mm, envelope_bottom_z),
+            Point2D(
+                snapshot.lens_center.x_mm,
+                snapshot.target_nominal.z_mm - snapshot.r_mm,
+            ),
+        ]
+        for ray in snapshot.chief_rays:
+            # Object endpoints are admitted below only if they belong to the
+            # local working area. Lens/image segments are always local geometry.
+            core_points.extend(ray[1:])
+        if proxy_is_visible and snapshot.proxy_sensor_endpoints is not None:
+            core_points.extend(snapshot.proxy_sensor_endpoints)
 
-        # Remote range/Scheimpflug intersections should not destroy useful scale.
-        nominal_bounds = _bounds(all_points)
-        characteristic = max(nominal_bounds.width(), nominal_bounds.height())
-        range_center = nominal_bounds.center()
-        range_end = snapshot.range_endpoints[1]
-        range_distance = math.hypot(
-            range_end.x_mm - range_center.x(),
-            -range_end.z_mm - range_center.y(),
+        # Establish scale from the emitter/WD/optical head first. Remote range,
+        # laser, chief-ray, and Scheimpflug endpoints remain exact in the
+        # snapshot but are represented at the viewport boundary.
+        local_bounds = _bounds(core_points)
+        optional_points = [
+            snapshot.laser_endpoints[1],
+            snapshot.target_near,
+            snapshot.target_far,
+            *snapshot.range_endpoints,
+            *(ray[0] for ray in snapshot.chief_rays),
+        ]
+        all_points = list(core_points)
+        all_points.extend(
+            point for point in optional_points if not self._point_is_remote(point, local_bounds)
         )
-        range_is_remote = range_distance > 2.0 * characteristic
-        if not range_is_remote:
-            all_points.extend(snapshot.range_endpoints)
+        range_is_remote = self._point_is_remote(
+            snapshot.range_endpoints[1],
+            local_bounds,
+        )
 
         visible_scheimpflug = snapshot.scheimpflug_point
         intersection_is_remote = False
         if visible_scheimpflug is not None:
-            center = nominal_bounds.center()
-            distance = math.hypot(
-                visible_scheimpflug.x_mm - center.x(),
-                -visible_scheimpflug.z_mm - center.y(),
+            intersection_is_remote = self._point_is_remote(
+                visible_scheimpflug,
+                local_bounds,
+                factor=2.5,
             )
-            intersection_is_remote = distance > 4.0 * characteristic
             if not intersection_is_remote:
                 all_points.append(visible_scheimpflug)
 
         scene_rect = _bounds(all_points)
+        characteristic = max(scene_rect.width(), scene_rect.height())
         self.setSceneRect(scene_rect)
         visible_range_endpoints = (
             (
@@ -1124,8 +1213,6 @@ class OpticsGraphicsScene(QGraphicsScene):
         )
         self.target_near_line.setVisible(targets_distinct)
         self.target_far_line.setVisible(targets_distinct)
-        self.labels["near"].setVisible(targets_distinct)
-        self.labels["far"].setVisible(targets_distinct)
 
         self._set_line(self.lens_line, *snapshot.lens_endpoints)
         self._set_line(self.sensor_line, *snapshot.sensor_endpoints)
@@ -1200,6 +1287,17 @@ class OpticsGraphicsScene(QGraphicsScene):
         self._position(self.image_marker, snapshot.image_center)
         self._position_screen_plane(self.lens_plane_marker, snapshot.lens_endpoints)
         self._position_screen_plane(self.sensor_plane_marker, snapshot.sensor_endpoints)
+        self._position_oriented_glyph(
+            self.laser_emitter_glyph,
+            snapshot.emitter,
+            snapshot.laser_endpoints[1],
+        )
+        self._position_screen_plane(self.lens_glyph, snapshot.lens_endpoints)
+        self._position_oriented_glyph(
+            self.camera_body_glyph,
+            snapshot.image_center,
+            snapshot.lens_center,
+        )
 
         self.invalid_overlay.setRect(scene_rect)
         self.invalid_overlay.setVisible(not snapshot.valid)
@@ -1245,11 +1343,7 @@ class OpticsGraphicsScene(QGraphicsScene):
         self._prepare_snapshot_callouts(
             snapshot,
             scene_rect,
-            visible_laser_start,
-            visible_laser_end,
-            visible_targets,
             visible_range_endpoints,
-            targets_distinct=targets_distinct,
             range_is_remote=range_is_remote,
             intersection_is_remote=intersection_is_remote,
             dimension_x=dimension_x,
@@ -1302,26 +1396,27 @@ class OpticsGraphicsScene(QGraphicsScene):
         snapshot = self._snapshot
         if snapshot is None:
             return self.sceneRect()
-        points = [
-            snapshot.target_near,
+        core_points = [
             snapshot.target_nominal,
-            snapshot.target_far,
             snapshot.lens_center,
             *snapshot.lens_endpoints,
             snapshot.image_center,
             *snapshot.sensor_endpoints,
             *snapshot.optical_axis_endpoints,
         ]
-        if snapshot.proxy_sensor_endpoints is not None:
-            points.extend(snapshot.proxy_sensor_endpoints)
+        if snapshot.proxy_sensor_endpoints is not None and not snapshot.workbook_mode:
+            core_points.extend(snapshot.proxy_sensor_endpoints)
+        head_bounds = _bounds(core_points)
+        points = list(core_points)
+        points.extend(
+            point
+            for point in (snapshot.target_near, snapshot.target_far)
+            if not self._point_is_remote(point, head_bounds)
+        )
         if snapshot.scheimpflug_point is not None:
             head_bounds = _bounds(points)
             intersection = snapshot.scheimpflug_point
-            center = head_bounds.center()
-            if math.hypot(
-                intersection.x_mm - center.x(),
-                -intersection.z_mm - center.y(),
-            ) <= 2.0 * max(head_bounds.width(), head_bounds.height()):
+            if not self._point_is_remote(intersection, head_bounds):
                 points.append(intersection)
         return _bounds(points)
 
