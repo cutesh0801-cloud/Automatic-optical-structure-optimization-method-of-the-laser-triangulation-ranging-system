@@ -16,8 +16,8 @@ jobs:
       MPLBACKEND: Agg
       UV_PYTHON_DOWNLOADS: never
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -40,8 +40,8 @@ jobs:
     env:
       UV_PYTHON_DOWNLOADS: never
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -66,7 +66,7 @@ jobs:
         run: >
           powershell.exe -NoProfile -ExecutionPolicy Bypass
           -File packaging/assemble_portable.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Scheimpflug-OptiMeter-windows-x64
           path: |

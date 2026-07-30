@@ -3,7 +3,10 @@ from __future__ import annotations
 import csv
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QToolBar
 
+from scheimpflug_optimeter.app import create_application
 from scheimpflug_optimeter.project import ProjectDocument, ProjectError
 from scheimpflug_optimeter.ui.main_window import MainWindow
 
@@ -13,13 +16,64 @@ def test_main_window_is_simulation_only(qtbot):
     window.maybe_save_changes = lambda: True
     qtbot.addWidget(window)
 
-    assert window.tabs.count() == 2
+    assert window.tabs.count() == 3
     assert [window.tabs.tabText(index) for index in range(window.tabs.count())] == [
         "워크북 계산 · 실시간 2D",
         "3D Scheimpflug 시각화",
+        "Basler 센서 비교",
     ]
     assert not hasattr(window, "camera")
     assert not hasattr(window, "calibration")
+
+
+def test_desktop_layout_is_readable_responsive_and_explicitly_static(qtbot):
+    application = create_application([])
+    window = MainWindow()
+    window.maybe_save_changes = lambda: True
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.design.solution is not None, timeout=5_000)
+
+    assert application.font().pointSize() >= 11
+    assert window.minimumWidth() == 1100
+    assert window.minimumHeight() == 700
+    assert window.tabs.documentMode()
+    assert window.status_label.objectName() == "calculationStatus"
+    assert window.status_label.property("state") in {"valid", "warning"}
+    assert window.status_label.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
+
+    inputs = window.design.input_panel
+    assert inputs.profile_group.title() == "정적 센서 규격"
+    assert "장치 연결 없음" in inputs.profile_notice.text()
+    assert inputs.camera.accessibleName() == "정적 센서 규격 프로파일"
+    assert "실제 장치를 연결하지 않습니다" in inputs.mode_help.text()
+    assert inputs.parameter_group.title() == "워크북 직접 입력"
+
+    assert not window.design.splitter.childrenCollapsible()
+    assert window.design.splitter.handleWidth() >= 8
+    assert window.design.input_scroll.minimumWidth() >= 315
+    assert window.design.result_scroll.minimumWidth() >= 335
+    assert window.design.view.minimumWidth() >= 400
+    assert (
+        window.design.input_scroll.horizontalScrollBarPolicy()
+        == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+
+    results = window.design.result_panel
+    assert results.summary.objectName() == "solutionSummary"
+    assert results.values.accessibleName() == "Scheimpflug 계산 수치 표"
+    assert results.values.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert results.messages.accessibleName() == "설계 경고와 제약 조건"
+    assert window.sensor_comparison.table.rowCount() == 4
+    assert window.sensor_comparison.table.selectionModel().selectedRows()[0].row() == 0
+    assert "4종" in window.sensor_comparison.selection_summary.text()
+    assert "QE" in window.sensor_comparison.sensitivity_notice.text()
+
+    toolbar = window.findChild(QToolBar, "mainToolbar")
+    assert toolbar is not None
+    toolbar_labels = {action.text() for action in toolbar.actions()}
+    assert "워크북 입력 CSV 불러오기…" not in toolbar_labels
+    assert {"새 프로젝트", "프로젝트 열기…", "저장", "전체 맞춤", "광학부 확대"} <= toolbar_labels
 
 
 def test_main_window_live_design_and_project_recalculation(qtbot):
@@ -82,6 +136,36 @@ def test_input_changes_are_debounced_and_invalid_result_is_not_stale(qtbot):
     assert not window.design.solution.valid
     assert window.design.scene.invalid_overlay.isVisible()
     assert window.design.performance.text()
+    assert window.sensor_comparison.selection_summary.property("state") == "warning"
+    assert "제약 위반" in window.sensor_comparison.selection_summary.text()
+
+
+def test_basler_comparison_recalculates_live_for_sensor_orientation(qtbot):
+    window = MainWindow()
+    window.maybe_save_changes = lambda: True
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.sensor_comparison.table.rowCount() == 4, timeout=5_000)
+
+    table = window.sensor_comparison.table
+    fov_column = window.sensor_comparison.column_index("fov")
+    initial_fov = table.item(0, fov_column).text()
+    assert "삼각측량 축 세로" in window.sensor_comparison.selection_summary.text()
+
+    axis = window.design.input_panel.sensor_axis
+    axis.setCurrentIndex(axis.findData("width"))
+    qtbot.waitUntil(
+        lambda: (
+            window.design.solution is not None
+            and window.design.solution.request.sensor_axis == "width"
+        ),
+        timeout=1_000,
+    )
+
+    assert "삼각측량 축 가로" in window.sensor_comparison.selection_summary.text()
+    assert table.item(0, fov_column).text() != initial_fov
+    assert window.status_label.property("state") == "warning"
+    assert "경고" in window.status_label.text()
 
 
 def test_workbook_is_default_and_direct_l_reproduces_both_regression_cases(qtbot):
@@ -100,6 +184,7 @@ def test_workbook_is_default_and_direct_l_reproduces_both_regression_cases(qtbot
     assert "고급/연구 참고" in window.design.input_panel.mode.itemText(1)
     assert window.tabs.tabText(0) == "워크북 계산 · 실시간 2D"
     assert window.tabs.tabText(1) == "3D Scheimpflug 시각화"
+    assert window.tabs.tabText(2) == "Basler 센서 비교"
     assert window.design.scene.sceneRect().height() < 500.0
     assert "레이저 교차 거리 s" in window.design.scene.labels["range"].text()
     assert "화면 밖" in window.design.scene.labels["range"].text()
@@ -120,6 +205,10 @@ def test_workbook_is_default_and_direct_l_reproduces_both_regression_cases(qtbot
         "레이저 교차 거리 s",
         "유도 초점거리 f",
         "총 광로 lo+fp",
+        "센서 기준 가로 FOV",
+        "센서 기준 세로 FOV",
+        "중앙 거리 민감도",
+        "전체 센서 최악 거리 민감도",
     } <= rows
 
     window.design.apply_project_input(

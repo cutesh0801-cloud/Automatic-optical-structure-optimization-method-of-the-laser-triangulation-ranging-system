@@ -10,17 +10,20 @@ from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QListWidget,
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
@@ -80,6 +83,25 @@ class OpticalCoreFacade:
         if not self.ready:
             raise CoreUnavailableError("하드웨어 카탈로그를 사용할 수 없습니다.")
         return float(self.hardware.get_camera(camera_id).sensor.length_mm(sensor_axis))
+
+    def compare_sensor_profiles(self, solution: Any) -> tuple[tuple[Any, Any], ...]:
+        """Evaluate every static sensor profile against one unchanged optical solution."""
+
+        if not self.ready:
+            raise CoreUnavailableError("하드웨어 카탈로그를 사용할 수 없습니다.")
+        sensor_axis = solution.request.sensor_axis
+        rows: list[tuple[Any, Any]] = []
+        for camera in self.cameras():
+            metrics = self.optics.calculate_sensor_imaging_metrics(
+                camera.sensor,
+                sensor_axis=sensor_axis,
+                alpha_deg=solution.alpha_deg,
+                beta_deg=solution.beta_deg,
+                lo_mm=solution.lo_mm,
+                fp_mm=solution.fp_mm,
+            )
+            rows.append((camera, metrics))
+        return tuple(rows)
 
     def solve(self, values: Mapping[str, Any]) -> tuple[Any, Any, SceneSnapshot]:
         if not self.ready:
@@ -236,18 +258,20 @@ class DesignInputPanel(QWidget):
         super().__init__(parent)
         self._facade = facade
         layout = QVBoxLayout(self)
-        title = QLabel("워크북/CSV 계산 입력")
-        title.setObjectName("panelTitle")
-        layout.addWidget(title)
-        self.mode_help = QLabel()
-        self.mode_help.setWordWrap(True)
-        self.mode_help.setStyleSheet(
-            "background:#eaf4ff;border:1px solid #a9cdec;"
-            "border-radius:4px;padding:7px;color:#174a72;"
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(11)
+        self.title = QLabel("Scheimpflug 설계 입력")
+        self.title.setObjectName("panelTitle")
+        self.title.setWordWrap(True)
+        self.title.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            self.title.sizePolicy().verticalPolicy(),
         )
-        layout.addWidget(self.mode_help)
-        form = QFormLayout()
-        self.form = form
+        layout.addWidget(self.title)
+        self.mode_help = QLabel()
+        self.mode_help.setObjectName("modeHelp")
+        self.mode_help.setWordWrap(True)
+        self.input_labels: dict[str, QLabel] = {}
 
         self.mode = QComboBox()
         self.mode.addItem("워크북 호환 계산 (기본)", "workbook")
@@ -273,10 +297,10 @@ class DesignInputPanel(QWidget):
             " mm",
             decimals=6,
         )
-        self.load_sensor_length_button = QPushButton("선택 프로파일 L 불러오기")
+        self.load_sensor_length_button = QPushButton("L에 적용")
         self.camera.setToolTip(
-            "광학 시뮬레이션에 사용할 센서 치수 프리셋입니다. "
-            "카메라를 검색하거나 연결하지 않습니다."
+            "광학 계산에 사용할 센서 치수 프리셋입니다. "
+            "모델명은 규격 식별자이며 장치를 검색하거나 연결하지 않습니다."
         )
         self.load_sensor_length_button.setToolTip(
             "선택한 정적 센서 규격의 폭 또는 높이를 L 입력으로 복사합니다."
@@ -292,21 +316,184 @@ class DesignInputPanel(QWidget):
         self.max_rear_mm = self._spin(1.0, 10_000.0, 105.0, " mm")
         self.wavelength_nm = self._spin(200.0, 2_000.0, 650.0, " nm", decimals=1)
 
-        form.addRow("계산 모드", self.mode)
-        form.addRow("센서 규격 프로파일", self.camera)
-        form.addRow("Edmund M12 렌즈", self.lens)
-        form.addRow("센서 사용 방향", self.sensor_axis)
-        form.addRow("워크북 V", self.v_mm)
-        form.addRow("워킹 디스턴스 d", self.d_mm)
-        form.addRow("센서/이미지 길이 L", self.sensor_length_container)
-        form.addRow("수광각 α", self.alpha_deg)
-        form.addRow("측정 범위 S", self.range_mm)
-        form.addRow("센서 틸트 β", self.beta_deg)
-        form.addRow("최대 폭 W", self.max_width_mm)
-        form.addRow("최대 후방 R", self.max_rear_mm)
-        form.addRow("레이저 파장", self.wavelength_nm)
-        layout.addLayout(form)
+        mode_group = QGroupBox("계산 방식")
+        mode_form = QFormLayout(mode_group)
+        self._configure_form(mode_form)
+        self._add_input_row(
+            mode_form,
+            "mode",
+            "계산 방식 · mode [선택]",
+            self.mode,
+            "Workbook은 구조설계 CSV의 V, d, L, α를 직접 재현합니다. "
+            "Canonical은 렌즈와 독립 α, β로 기울어진 결상을 비교합니다.",
+        )
+        layout.addWidget(mode_group)
+        layout.addWidget(self.mode_help)
+
+        self.profile_group = QGroupBox("정적 센서 규격")
+        self.profile_group.setObjectName("staticSensorGroup")
+        profile_form = QFormLayout(self.profile_group)
+        self._configure_form(profile_form)
+        self.profile_notice = QLabel("정적 프로파일만 사용 · 장치 연결 없음")
+        self.profile_notice.setObjectName("staticSensorNotice")
+        self.profile_notice.setWordWrap(True)
+        self.profile_notice.setAccessibleName("정적 센서 규격은 실제 장치에 연결하지 않음")
+        profile_form.addRow(self.profile_notice)
+        self._add_input_row(
+            profile_form,
+            "camera",
+            "정적 센서 · camera [px/µm]",
+            self.camera,
+            "해상도, 픽셀 피치와 활성 크기를 제공하는 정적 규격 프리셋입니다. "
+            "모델명은 식별자일 뿐 실제 카메라를 검색하거나 연결하지 않습니다.",
+        )
+        self._add_input_row(
+            profile_form,
+            "sensor_axis",
+            "삼각측량 축 · axis [width/height]",
+            self.sensor_axis,
+            "기울어진 센서에서 레이저 거리 변화가 투영되는 축입니다. "
+            "선택 방향에 따라 FOV와 거리 감도 계산이 달라집니다.",
+        )
+        layout.addWidget(self.profile_group)
+
+        self.parameter_group = QGroupBox("워크북 직접 입력")
+        form = QFormLayout(self.parameter_group)
+        self._configure_form(form)
+        self.form = form
+        self._add_input_row(
+            form,
+            "lens",
+            "Edmund M12 렌즈 · f [mm]",
+            self.lens,
+            "Canonical 계산에 사용할 정적 렌즈 규격입니다. "
+            "목록에는 SKU와 유효 초점거리 f가 표시됩니다.",
+        )
+        self._add_input_row(
+            form,
+            "v_mm",
+            "워크북 기준 거리 · V [mm]",
+            self.v_mm,
+            "원본 워크북 관계식에서 베이스라인 b, 물체거리 lo와 후방 R을 "
+            "유도하는 기준 거리 V입니다.",
+        )
+        self._add_input_row(
+            form,
+            "d_mm",
+            "워킹 디스턴스 · d [mm]",
+            self.d_mm,
+            "레이저 발광 기준점에서 기준 대상면까지의 설계 거리입니다. "
+            "2D 장면의 WD 치수로 표시됩니다.",
+        )
+        self._add_input_row(
+            form,
+            "sensor_length_mm",
+            "센서/이미지 길이 · L [mm]",
+            self.sensor_length_container,
+            "Workbook 계산에 직접 사용하는 유효 이미지 길이 L입니다. "
+            "정적 센서 규격값은 오른쪽 버튼으로 명시적으로 복사할 수 있습니다.",
+        )
+        self.sensor_length_mm.setToolTip(
+            "Workbook 계산에 직접 사용하는 유효 이미지 길이 L [mm]입니다."
+        )
+        self.sensor_length_mm.setAccessibleDescription(self.sensor_length_mm.toolTip())
+        self.sensor_length_mm.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            self.sensor_length_mm.sizePolicy().verticalPolicy(),
+        )
+        self.sensor_length_container.setMinimumWidth(170)
+        self._add_input_row(
+            form,
+            "alpha_deg",
+            "수광각 · α [°]",
+            self.alpha_deg,
+            "레이저축과 카메라 수광 광축 사이의 각도 α입니다.",
+        )
+        self._add_input_row(
+            form,
+            "range_mm",
+            "측정 범위 · S [mm]",
+            self.range_mm,
+            "Canonical 모드에서 기준 대상면을 중심으로 계산할 전체 깊이 범위 S입니다.",
+        )
+        self._add_input_row(
+            form,
+            "beta_deg",
+            "센서 틸트각 · β [°]",
+            self.beta_deg,
+            "Canonical 모드에서 이미지/센서 평면에 적용하는 Scheimpflug 틸트각 β입니다.",
+        )
+        self._add_input_row(
+            form,
+            "max_width_mm",
+            "기구 최대 폭 · W_max [mm]",
+            self.max_width_mm,
+            "Canonical 구조가 넘지 않아야 하는 수평 기구 외곽의 상한입니다.",
+        )
+        self._add_input_row(
+            form,
+            "max_rear_mm",
+            "후방 허용 한계 · R_max [mm]",
+            self.max_rear_mm,
+            "Canonical 구조에서 기준 위치 뒤쪽으로 허용하는 기구 외곽의 상한입니다.",
+        )
+        self._add_input_row(
+            form,
+            "wavelength_nm",
+            "레이저 파장 · λ [nm]",
+            self.wavelength_nm,
+            "선택 렌즈의 확인된 코팅 파장 범위와 호환성을 검사하는 설계 파장입니다.",
+        )
+        layout.addWidget(self.parameter_group)
+
+        self.formula_card = QGroupBox("현재 모드 핵심 수식")
+        self.formula_card.setObjectName("formulaCard")
+        formula_layout = QVBoxLayout(self.formula_card)
+        formula_layout.setContentsMargins(8, 8, 8, 8)
+        formula_layout.setSpacing(5)
+        self.formula_mode_title = QLabel()
+        self.formula_mode_title.setObjectName("formulaModeTitle")
+        formula_title_font = self.formula_mode_title.font()
+        formula_title_font.setBold(True)
+        self.formula_mode_title.setFont(formula_title_font)
+        self.formula_equations = QLabel()
+        self.formula_equations.setObjectName("formulaEquations")
+        self.formula_variables = QLabel()
+        self.formula_variables.setObjectName("formulaVariables")
+        for formula_label in (
+            self.formula_mode_title,
+            self.formula_equations,
+            self.formula_variables,
+        ):
+            formula_label.setWordWrap(True)
+            formula_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.formula_equations.setAccessibleName("현재 모드 핵심 관계식")
+        self.formula_variables.setAccessibleName("현재 모드 수식 변수 대응")
+        self.formula_card.setAccessibleName("현재 계산 모드의 표시용 핵심 수식")
+        formula_layout.addWidget(self.formula_mode_title)
+        formula_layout.addWidget(self.formula_equations)
+        formula_layout.addWidget(self.formula_variables)
+        layout.addWidget(self.formula_card)
         layout.addStretch(1)
+
+        accessible_names = (
+            (self.mode, "계산 모드"),
+            (self.camera, "정적 센서 규격 프로파일"),
+            (self.lens, "Edmund M12 렌즈 규격"),
+            (self.sensor_axis, "센서 계산 축"),
+            (self.v_mm, "워크북 V 밀리미터"),
+            (self.d_mm, "워킹 디스턴스 d 밀리미터"),
+            (self.sensor_length_mm, "센서 이미지 길이 L 밀리미터"),
+            (self.alpha_deg, "수광각 알파 도"),
+            (self.range_mm, "측정 범위 S 밀리미터"),
+            (self.beta_deg, "센서 틸트 베타 도"),
+            (self.max_width_mm, "최대 폭 W 밀리미터"),
+            (self.max_rear_mm, "최대 후방 R 밀리미터"),
+            (self.wavelength_nm, "레이저 파장 나노미터"),
+        )
+        for widget, name in accessible_names:
+            widget.setAccessibleName(name)
+        self.load_sensor_length_button.setAccessibleName("선택한 정적 센서 길이를 L 입력에 적용")
         self._load_catalogs()
 
         for widget in (
@@ -331,6 +518,45 @@ class DesignInputPanel(QWidget):
         self.mode.currentIndexChanged.connect(self._update_mode_visibility)
         self.load_sensor_length_button.clicked.connect(self.load_selected_camera_sensor_length)
         self._update_mode_visibility()
+
+    @staticmethod
+    def _configure_form(form: QFormLayout) -> None:
+        form.setContentsMargins(8, 8, 8, 8)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(9)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+    def _add_input_row(
+        self,
+        form: QFormLayout,
+        key: str,
+        label_text: str,
+        field: QWidget,
+        help_text: str,
+    ) -> None:
+        """Add one compact, self-explanatory row without affecting calculations."""
+
+        label = QLabel(label_text)
+        label.setObjectName(f"{key}InputLabel")
+        label.setWordWrap(True)
+        label.setToolTip(help_text)
+        label.setAccessibleName(label_text)
+        label.setAccessibleDescription(help_text)
+        field.setToolTip(help_text)
+        field.setAccessibleDescription(help_text)
+        # A modest explicit minimum makes QFormLayout wrap the field below a
+        # long label instead of squeezing the editor into an unusable sliver.
+        # Ignored keeps intrinsic combo/spin size hints from forcing a
+        # horizontal scrollbar in the 315 px input pane.
+        field.setMinimumWidth(132)
+        field.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            field.sizePolicy().verticalPolicy(),
+        )
+        self.input_labels[key] = label
+        form.addRow(label, field)
 
     @staticmethod
     def _spin(
@@ -373,6 +599,9 @@ class DesignInputPanel(QWidget):
 
     def _update_mode_visibility(self) -> None:
         workbook = self.mode.currentData() == "workbook"
+        self.parameter_group.setTitle(
+            "워크북 직접 입력" if workbook else "Canonical 비교 입력 및 제약"
+        )
         for widget in (self.v_mm, self.sensor_length_container):
             self.form.setRowVisible(widget, workbook)
         for widget in (
@@ -392,10 +621,30 @@ class DesignInputPanel(QWidget):
                 "L 직접 입력값이 계산의 권위값입니다. 센서 프로파일은 치수 "
                 "프리셋일 뿐 실제 장치를 연결하지 않습니다."
             )
+            self.formula_mode_title.setText("Workbook Compatibility · V, d, L, α 직접 입력")
+            self.formula_equations.setText(
+                "β=90°−α · b=V tanα · x=L/2\n"
+                "W=b+x · R=V−d · lo=V cosα · fp=b cosβ\n"
+                "s=x lo sinβ / [fp sinα − x sin(α+β)] · 1/f=1/lo+1/fp"
+            )
+            self.formula_variables.setText(
+                "변수: V 기준 거리 · d 워킹 디스턴스 · L 이미지 길이 · "
+                "α 수광각 · β 유도 센서각 · s 레이저 교차 거리"
+            )
         else:
             self.mode_help.setText(
                 "고급/연구 참고 기능입니다. 논문식 canonical 설계, 렌즈 후보 "
                 "호환성 및 구조 최적화를 비교할 때 사용하세요."
+            )
+            self.formula_mode_title.setText("Canonical Design · 독립 α, β와 렌즈 f")
+            self.formula_equations.setText(
+                "r=tanβ/tanα · lo=f(1+r) · fp=f(1+1/r)\n"
+                "x(s)=s fp sinα / [lo sinβ + s sin(α+β)]\n"
+                "L_required=|x(+S/2)−x(−S/2)|"
+            )
+            self.formula_variables.setText(
+                "변수: d 기준 WD · S 측정 범위 · f 렌즈 초점거리 · "
+                "α 수광각 · β 센서 틸트각 · s 기준면 대비 깊이"
             )
 
     @Slot()
@@ -485,22 +734,44 @@ class ResultPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        title = QLabel("계산 결과 및 제약")
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(11)
+        title = QLabel("계산 결과")
         title.setObjectName("panelTitle")
         layout.addWidget(title)
         self.summary = QLabel("입력을 계산하는 중…")
+        self.summary.setObjectName("solutionSummary")
+        self.summary.setProperty("state", "warning")
         self.summary.setWordWrap(True)
+        self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.summary.setAccessibleName("계산 유효성 요약")
         layout.addWidget(self.summary)
 
+        values_group = QGroupBox("수치 결과")
+        values_layout = QVBoxLayout(values_group)
         self.values = QTreeWidget()
         self.values.setHeaderLabels(["항목", "값"])
         self.values.setRootIsDecorated(False)
-        self.values.setMinimumWidth(315)
-        layout.addWidget(self.values, 2)
+        self.values.setAlternatingRowColors(True)
+        self.values.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.values.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.values.setAccessibleName("Scheimpflug 계산 수치 표")
+        self.values.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.values.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.values.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.values.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        values_layout.addWidget(self.values)
+        layout.addWidget(values_group, 2)
 
-        layout.addWidget(QLabel("호환성 / 경고"))
+        messages_group = QGroupBox("정적 규격 비교 및 제약")
+        messages_layout = QVBoxLayout(messages_group)
         self.messages = QListWidget()
-        layout.addWidget(self.messages, 1)
+        self.messages.setAlternatingRowColors(True)
+        self.messages.setWordWrap(True)
+        self.messages.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.messages.setAccessibleName("설계 경고와 제약 조건")
+        messages_layout.addWidget(self.messages)
+        layout.addWidget(messages_group, 1)
 
         self.optimization_group = QGroupBox("고급/연구 참고 · 구조 최적화")
         optimization_layout = QVBoxLayout(self.optimization_group)
@@ -530,13 +801,19 @@ class ResultPanel(QWidget):
         self.cancel_button.clicked.connect(self.cancel_requested)
         self.optimization_results.itemDoubleClicked.connect(self._select_candidate)
 
+    def _set_summary(self, text: str, state: str) -> None:
+        self.summary.setText(text)
+        self.summary.setProperty("state", state)
+        self.summary.style().unpolish(self.summary)
+        self.summary.style().polish(self.summary)
+
     def display_solution(self, solution: Any, compatibility: Any | None) -> None:
         self.values.clear()
         status = "유효" if solution.valid else "사용 불가"
         workbook = solution.mode.value == "workbook"
         self.optimization_group.setVisible(not workbook)
         if workbook:
-            self.summary.setText(f"워크북 호환 계산 · {status}")
+            summary_text = f"{status} · 워크북 호환 계산"
             rows = (
                 ("워크북 V", solution.request.v_mm, "mm"),
                 ("워킹 디스턴스 d", solution.request.d_mm, "mm"),
@@ -554,7 +831,7 @@ class ResultPanel(QWidget):
                 ("총 광로 lo+fp", solution.total_optical_length_mm, "mm"),
             )
         else:
-            self.summary.setText(f"Canonical 고급 계산 · {status}")
+            summary_text = f"{status} · Canonical 고급 계산"
             rows = (
                 ("초점거리 f", solution.focal_length_mm, "mm"),
                 ("수광각 α", solution.alpha_deg, "°"),
@@ -568,15 +845,69 @@ class ResultPanel(QWidget):
                 ("근거리 결상 x", solution.x_near_mm, "mm"),
                 ("원거리 결상 x", solution.x_far_mm, "mm"),
                 ("거리/센서", solution.distance_per_sensor_mm, "mm/mm"),
-                ("거리/픽셀", solution.distance_per_pixel_mm, "mm/px"),
+                ("요청 범위 최악 거리 민감도", solution.distance_per_pixel_mm, "mm/px"),
+            )
+        metrics = solution.sensor_metrics
+        if metrics is not None:
+            rows += (
+                ("센서 기준 가로 FOV", metrics.horizontal_fov_mm, "mm"),
+                ("센서 기준 세로 FOV", metrics.vertical_fov_mm, "mm"),
+                (
+                    "가로 물체측 샘플링",
+                    (
+                        metrics.horizontal_sampling_mm_per_px * 1000.0
+                        if metrics.horizontal_sampling_mm_per_px is not None
+                        else None
+                    ),
+                    "µm/px",
+                ),
+                (
+                    "세로 물체측 샘플링",
+                    (
+                        metrics.vertical_sampling_mm_per_px * 1000.0
+                        if metrics.vertical_sampling_mm_per_px is not None
+                        else None
+                    ),
+                    "µm/px",
+                ),
+                (
+                    "중앙 거리 민감도",
+                    metrics.range_sensitivity_center_mm_per_px,
+                    "mm/px",
+                ),
+                (
+                    "전체 센서 최악 거리 민감도",
+                    metrics.range_sensitivity_worst_mm_per_px,
+                    "mm/px",
+                ),
             )
         for name, value, unit in rows:
             if value is None or not math.isfinite(float(value)):
                 text = "—"
             else:
                 text = f"{float(value):.6g} {unit}"
-            self.values.addTopLevelItem(QTreeWidgetItem([name, text]))
-        self.values.resizeColumnToContents(0)
+            item = QTreeWidgetItem([name, text])
+            item.setToolTip(0, name)
+            item.setToolTip(1, text)
+            if "FOV" in name:
+                help_text = (
+                    "센서 전체 유효 영역이 물체 공간에서 덮는 범위입니다. "
+                    "선택한 삼각측량 축은 비선형 Scheimpflug 역투영을 사용합니다."
+                )
+                item.setToolTip(0, help_text)
+                item.setToolTip(1, help_text)
+            elif "샘플링" in name:
+                help_text = "계산 FOV를 해당 축의 네이티브 픽셀 수로 나눈 평균 물체측 간격입니다."
+                item.setToolTip(0, help_text)
+                item.setToolTip(1, help_text)
+            elif "거리 민감도" in name:
+                help_text = (
+                    "센서 1픽셀 이동에 대응하는 기하학적 거리 변화량입니다. "
+                    "작을수록 더 미세하며, 양자효율이나 저조도 감도를 뜻하지 않습니다."
+                )
+                item.setToolTip(0, help_text)
+                item.setToolTip(1, help_text)
+            self.values.addTopLevelItem(item)
 
         self.messages.clear()
         for warning in solution.warnings:
@@ -594,9 +925,18 @@ class ResultPanel(QWidget):
                 self.messages.addItem(f"{marker} {check.label}: {check.message}")
         if not self.messages.count():
             self.messages.addItem("✓ 경고 및 제약 위반 없음")
+        has_messages = bool(solution.warnings or solution.violations)
+        if compatibility is not None:
+            has_messages = has_messages or any(
+                check.status.value != "pass" for check in compatibility.checks
+            )
+        self._set_summary(
+            summary_text,
+            "valid" if solution.valid and not has_messages else "warning",
+        )
 
     def display_error(self, message: str) -> None:
-        self.summary.setText("계산 실패")
+        self._set_summary("계산 실패 · 입력값을 확인하세요", "error")
         self.values.clear()
         self.messages.clear()
         self.messages.addItem(f"✕ {message}")
@@ -615,7 +955,7 @@ class ResultPanel(QWidget):
     @Slot(float, str)
     def update_optimization_progress(self, fraction: float, message: str) -> None:
         self.progress.setValue(round(max(0.0, min(1.0, fraction)) * 100.0))
-        self.summary.setText(message)
+        self._set_summary(message, "warning")
 
     def display_optimization(self, result: Any) -> None:
         self.set_optimizing(False)
@@ -691,32 +1031,60 @@ class DesignWidget(QWidget):
         self._optimization_cancel = threading.Event()
 
         layout = QVBoxLayout(self)
-        toolbar = QHBoxLayout()
-        self.fit_button = QPushButton("전체 맞춤")
-        self.head_zoom_button = QPushButton("광학 헤드 확대")
-        self.export_png_button = QPushButton("PNG 내보내기")
-        self.export_svg_button = QPushButton("SVG 내보내기")
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+        scene_toolbar = QFrame()
+        scene_toolbar.setObjectName("sceneToolbar")
+        toolbar = QHBoxLayout(scene_toolbar)
+        toolbar.setContentsMargins(10, 6, 10, 6)
+        toolbar.setSpacing(7)
+        workspace_title = QLabel("2D 광학 장면")
+        workspace_title.setObjectName("workspaceTitle")
+        toolbar.addWidget(workspace_title)
+        toolbar.addSpacing(6)
+        self.fit_button = QPushButton("전체 보기")
+        self.fit_button.setProperty("role", "primary")
+        self.head_zoom_button = QPushButton("광학부 확대")
+        self.export_png_button = QPushButton("PNG 저장")
+        self.export_svg_button = QPushButton("SVG 저장")
         self.performance = QLabel("대기")
+        self.performance.setObjectName("performanceBadge")
+        self.performance.setProperty("state", "idle")
+        self.performance.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.performance.setToolTip("입력 변경부터 계산·2D 장면 갱신까지 걸린 시간입니다.")
+        self.performance.setAccessibleName("실시간 갱신 성능")
+        self.fit_button.setToolTip("전체 광학 구조를 동일 축척으로 화면에 맞춥니다.")
+        self.head_zoom_button.setToolTip("렌즈와 센서 주변 광학부를 확대합니다.")
+        self.export_png_button.setToolTip("현재 계산 스냅샷과 2D 장면을 PNG로 저장합니다.")
+        self.export_svg_button.setToolTip("현재 계산 스냅샷과 2D 장면을 SVG로 저장합니다.")
         toolbar.addWidget(self.fit_button)
         toolbar.addWidget(self.head_zoom_button)
         toolbar.addWidget(self.export_png_button)
         toolbar.addWidget(self.export_svg_button)
         toolbar.addStretch(1)
         toolbar.addWidget(self.performance)
-        layout.addLayout(toolbar)
+        layout.addWidget(scene_toolbar)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setObjectName("designSplitter")
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(8)
+        self.splitter.setOpaqueResize(True)
         self.input_panel = DesignInputPanel(self.facade)
         self.scene = OpticsGraphicsScene(self)
         self.view = OpticsGraphicsView(self.scene)
+        self.view.setMinimumWidth(400)
+        self.view.setAccessibleName("실시간 Scheimpflug 2D 광학 장면")
         self.result_panel = ResultPanel()
-        self.splitter.addWidget(self._scroll(self.input_panel))
+        self.input_scroll = self._scroll(self.input_panel, minimum_width=315)
+        self.result_scroll = self._scroll(self.result_panel, minimum_width=335)
+        self.splitter.addWidget(self.input_scroll)
         self.splitter.addWidget(self.view)
-        self.splitter.addWidget(self._scroll(self.result_panel))
+        self.splitter.addWidget(self.result_scroll)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setStretchFactor(2, 0)
-        self.splitter.setSizes([330, 850, 370])
+        self.splitter.setSizes([340, 820, 380])
         layout.addWidget(self.splitter, 1)
 
         self._debounce = QTimer(self)
@@ -735,13 +1103,20 @@ class DesignWidget(QWidget):
         self._initial_calculation.start(0)
 
     @staticmethod
-    def _scroll(widget: QWidget) -> QScrollArea:
+    def _scroll(widget: QWidget, *, minimum_width: int) -> QScrollArea:
         area = QScrollArea()
         area.setWidgetResizable(True)
         area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setWidget(widget)
-        area.setMinimumWidth(300)
+        area.setMinimumWidth(minimum_width)
         return area
+
+    def _set_performance(self, text: str, state: str) -> None:
+        self.performance.setText(text)
+        self.performance.setProperty("state", state)
+        self.performance.style().unpolish(self.performance)
+        self.performance.style().polish(self.performance)
 
     def schedule_recalculation(self) -> None:
         self._debounce.start()
@@ -766,7 +1141,10 @@ class DesignWidget(QWidget):
             message = str(exc)
             self.scene.set_invalid_message(message)
             self.result_panel.display_error(message)
-            self.performance.setText(f"계산 실패 · {(perf_counter() - started) * 1000.0:.1f} ms")
+            self._set_performance(
+                f"계산 실패 · {(perf_counter() - started) * 1000.0:.1f} ms",
+                "error",
+            )
             self.solution_changed.emit(None, None)
             return
 
@@ -777,8 +1155,10 @@ class DesignWidget(QWidget):
             self.view.fit_scene()
         self.result_panel.display_solution(solution, compatibility)
         elapsed_ms = (perf_counter() - started) * 1000.0
-        self.performance.setText(
-            f"{elapsed_ms:.1f} ms" + (" · 목표 이내" if elapsed_ms <= 100.0 else " · 100 ms 초과")
+        self._set_performance(
+            f"{elapsed_ms:.1f} ms · "
+            + ("실시간 목표 이내" if elapsed_ms <= 100.0 else "100 ms 초과"),
+            "valid" if elapsed_ms <= 100.0 else "warning",
         )
         self.solution_changed.emit(solution, snapshot)
 

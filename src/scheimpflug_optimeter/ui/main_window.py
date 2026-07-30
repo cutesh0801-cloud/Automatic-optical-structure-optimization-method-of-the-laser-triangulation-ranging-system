@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
+from scheimpflug_optimeter import __version__
 from scheimpflug_optimeter.project import (
     PROJECT_SUFFIX,
     ProjectDocument,
@@ -27,6 +28,7 @@ from scheimpflug_optimeter.project import (
 )
 
 from .design import DesignWidget
+from .sensor_comparison import SensorComparisonWidget
 from .three_d import ThreeDWidget
 
 _DEFAULT_DESIGN_INPUT = {
@@ -56,6 +58,7 @@ class MainWindow(QMainWindow):
         self.setObjectName("MainWindow")
         self.setWindowTitle("Scheimpflug OptiMeter — 새 프로젝트")
         self.resize(1500, 920)
+        self.setMinimumSize(1100, 700)
         self._project_path: Path | None = None
         self._project_name = "새 프로젝트"
         self._dirty = False
@@ -64,17 +67,32 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("Scheimpflug OptiMeter", "Scheimpflug OptiMeter")
 
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.setAccessibleName("Scheimpflug 시뮬레이션 화면")
         self.design = DesignWidget()
         self.three_d = ThreeDWidget()
+        self.sensor_comparison = SensorComparisonWidget()
         self.tabs.addTab(self.design, "워크북 계산 · 실시간 2D")
         self.tabs.addTab(self.three_d, "3D Scheimpflug 시각화")
+        # Keep the historic 3D tab at index 1 so schema-v1 project view state
+        # continues to open the same page after this comparison tab was added.
+        self.tabs.addTab(self.sensor_comparison, "Basler 센서 비교")
         self.setCentralWidget(self.tabs)
 
         self._create_actions()
         self._create_menus()
         self._create_toolbar()
-        self.status_label = QLabel("Python 3.12 · 계산 준비")
+        self.statusBar().setSizeGripEnabled(False)
+        self.status_label = QLabel()
+        self.status_label.setObjectName("calculationStatus")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.status_label.setAccessibleName("현재 계산 상태")
         self.statusBar().addPermanentWidget(self.status_label)
+        self._set_calculation_status(
+            "계산 준비 · 입력값을 변경하면 자동으로 갱신됩니다.",
+            "ready",
+        )
 
         self.design.solution_changed.connect(self._on_solution_changed)
         self.design.input_panel.changed.connect(self._mark_dirty)
@@ -99,11 +117,19 @@ class MainWindow(QMainWindow):
         self.export_svg_action = QAction("광학 장면 SVG…", self)
         self.exit_action = QAction("끝내기", self)
         self.exit_action.setShortcut(QKeySequence.StandardKey.Quit)
-        self.fit_action = QAction("광학 장면 전체 맞춤", self)
+        self.fit_action = QAction("전체 맞춤", self)
         self.fit_action.setShortcut("F")
-        self.head_zoom_action = QAction("광학 헤드 확대", self)
+        self.head_zoom_action = QAction("광학부 확대", self)
         self.head_zoom_action.setShortcut("H")
         self.about_action = QAction("Scheimpflug OptiMeter 정보", self)
+
+        self.new_action.setStatusTip("새 시뮬레이션 프로젝트를 만듭니다.")
+        self.open_action.setStatusTip("저장된 Scheimpflug 프로젝트를 엽니다.")
+        self.save_action.setStatusTip("현재 입력과 화면 상태를 저장합니다.")
+        self.import_csv_action.setStatusTip("워크북 호환 입력 한 행을 CSV에서 불러옵니다.")
+        self.export_csv_action.setStatusTip("현재 워크북 계산값을 CSV로 저장합니다.")
+        self.fit_action.setStatusTip("2D 광학 구조 전체를 같은 축척으로 맞춥니다. (F)")
+        self.head_zoom_action.setStatusTip("렌즈와 센서 주변 광학부를 확대합니다. (H)")
 
         self.new_action.triggered.connect(self.new_project)
         self.open_action.triggered.connect(self.open_project_dialog)
@@ -145,16 +171,24 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("기본 도구")
         toolbar.setObjectName("mainToolbar")
         toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        toolbar.setMinimumHeight(42)
         toolbar.addAction(self.new_action)
         toolbar.addAction(self.open_action)
         toolbar.addAction(self.save_action)
         toolbar.addSeparator()
-        toolbar.addAction(self.import_csv_action)
-        toolbar.addAction(self.export_csv_action)
-        toolbar.addSeparator()
         toolbar.addAction(self.fit_action)
         toolbar.addAction(self.head_zoom_action)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+    def _set_calculation_status(self, text: str, state: str) -> None:
+        """Update the readable status text and its non-colour semantic state."""
+
+        self.status_label.setText(text)
+        self.status_label.setProperty("state", state)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def _restore_window_state(self) -> None:
         geometry = self._settings.value("window/geometry")
@@ -177,14 +211,32 @@ class MainWindow(QMainWindow):
     def _on_solution_changed(self, solution, snapshot) -> None:
         if solution is None or snapshot is None:
             self._latest_3d_payload = None
+            self.sensor_comparison.display_metrics(
+                (),
+                selected_camera_id=None,
+                context_warning="입력 계산 오류로 센서 비교를 중단했습니다.",
+            )
             if self.tabs.currentWidget() is self.three_d:
                 self.three_d.set_geometry(
                     None,
                     alpha_deg=0.0,
                     beta_deg=0.0,
                 )
-            self.status_label.setText("계산 오류 — 설계 탭의 오류를 확인하세요.")
+            self._set_calculation_status(
+                "계산 오류 · 입력 패널의 오류 메시지를 확인하세요.",
+                "error",
+            )
             return
+        comparison_rows = self.design.facade.compare_sensor_profiles(solution)
+        self.sensor_comparison.display_metrics(
+            comparison_rows,
+            selected_camera_id=self.design.input_panel.camera.currentData(),
+            context_warning=(
+                "현재 광학 해에 제약 위반이 있어 비교값은 설계에 사용할 수 없습니다."
+                if not solution.valid
+                else None
+            ),
+        )
         magnification = solution.fp_mm / solution.lo_mm if solution.lo_mm > 0.0 else 1.0
         self._latest_3d_payload = (
             snapshot,
@@ -199,22 +251,33 @@ class MainWindow(QMainWindow):
             magnification=magnification,
             render=self.tabs.currentWidget() is self.three_d,
         )
-        state = "유효" if solution.valid else "제약 위반"
+        warning_count = len(solution.warnings)
+        if not solution.valid:
+            state = "제약 위반"
+            status_state = "warning"
+        elif warning_count:
+            state = f"유효 · 경고 {warning_count}건"
+            status_state = "warning"
+        else:
+            state = "유효"
+            status_state = "valid"
         if solution.mode.value == "workbook":
             ray_intercept = (
                 f"{solution.ray_intercept_s_mm:.3f} mm"
                 if solution.ray_intercept_s_mm is not None
                 else "계산 불가"
             )
-            self.status_label.setText(
+            self._set_calculation_status(
                 f"워크북 {state} · W={solution.width_exact_mm:.3f} mm · "
                 f"R={solution.rear_exact_mm:.3f} mm · "
-                f"s={ray_intercept}"
+                f"s={ray_intercept}",
+                status_state,
             )
         else:
-            self.status_label.setText(
+            self._set_calculation_status(
                 f"Canonical {state} · f={solution.focal_length_mm:.3f} mm · "
-                f"L={solution.required_sensor_length_mm:.3f} mm"
+                f"L={solution.required_sensor_length_mm:.3f} mm",
+                status_state,
             )
 
     def _on_tab_changed(self, _index: int) -> None:
@@ -522,8 +585,9 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "Scheimpflug OptiMeter",
-            "<b>Scheimpflug OptiMeter 0.1.0</b><br>"
+            f"<b>Scheimpflug OptiMeter {__version__}</b><br>"
             "워크북/CSV 기반 Scheimpflug 수치 계산·2D/3D 시각화 도구<br>"
+            "정적 Basler 프로파일 FOV·샘플링·거리 민감도 비교<br>"
             "장치 연결이나 영상 측정 기능은 포함하지 않습니다.<br><br>"
             "Python 3.12 · PySide6 · Apache-2.0",
         )

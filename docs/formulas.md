@@ -66,6 +66,51 @@ the exact segment is generally asymmetric about the nominal image point. The
 application draws this exact segment solid and the paper's centred packaging
 proxy dashed.
 
+## Sensor-profile FOV, sampling and range sensitivity
+
+For a fixed optical solution, write the tilted-axis image mapping as
+
+```text
+A = fp sin(α)
+B = lo sin(β)
+C = sin(α + β)
+x(s) = A s / (B + C s)
+```
+
+The object displacement corresponding to a sensor coordinate is the exact
+inverse
+
+```text
+s(x) = B x / (A - C x)
+```
+
+The selected sensor axis spans `x = -L/2 ... +L/2`. Its object-space field is
+the absolute difference between the two inverse-mapped endpoints. A pole
+`A-Cx=0` inside that interval makes the field invalid instead of producing an
+infinite-looking result.
+
+Local geometric range sensitivity is
+
+```text
+ds/dpixel = |A B / (A - C x)²| × pixel_pitch_mm
+```
+
+and is reported at the two endpoints and centre, with the worst value called
+out separately. Because this derivative varies across a tilted sensor, one
+single centre value must not be presented as uniform resolution.
+
+At the reference plane the transverse magnification is `m=fp/lo`. The axis
+orthogonal to triangulation therefore uses
+
+```text
+FOV_orthogonal = sensor_length_orthogonal / |m|
+```
+
+Average object sampling on either display axis is its calculated FOV divided
+by the corresponding native pixel count. These are geometric sampling
+metrics; diffraction, MTF, blur, pixel aperture, noise and quantum efficiency
+are outside the model.
+
 ## Three-dimensional full focus
 
 For object tilts `α, β`, magnification `m`, and sensor tilts `γ, δ`:

@@ -50,10 +50,12 @@ def test_catalog_contains_verified_basler_tiers_and_edmund_skus():
     assert (dma.sensor.width_px, dma.sensor.height_px) == (2064, 1552)
     assert dma.sensor.pixel_pitch_um == pytest.approx(2.25)
     assert dma.max_fps == pytest.approx(37.2)
+    assert any("32.6 fps" in note and "packet size of 4000" in note for note in dma.notes)
 
     daa = get_camera("basler-daa2448-70um")
     assert (daa.sensor.width_px, daa.sensor.height_px) == (2448, 2048)
     assert any("2472 x 2064" in note for note in daa.notes)
+    assert any("29.8 fps" in note and "72.8 fps" in note for note in daa.notes)
 
 
 def test_sensor_can_be_resolved_by_sensor_or_camera_id_and_catalog_is_immutable():

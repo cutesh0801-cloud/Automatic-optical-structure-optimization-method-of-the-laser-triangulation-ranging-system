@@ -1,104 +1,385 @@
 name: Release
 
+run-name: >-
+  Release ${{ github.event_name == 'create' && github.ref_name || inputs.release_tag }}
+
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
+  create:
   workflow_dispatch:
+    inputs:
+      release_type:
+        description: Release policy to apply
+        required: true
+        type: choice
+        options:
+          - maintenance
+          - version
+      release_tag:
+        description: "maintenance: build-YYYYMMDD.N; version: v<pyproject version>"
+        required: true
+        type: string
+      confirmation:
+        description: "Type RELEASE_MAINTENANCE or RELEASE_VERSION exactly"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: >-
+    release-${{ github.event_name == 'create' && github.ref_name || inputs.release_tag }}
+  cancel-in-progress: false
+
 jobs:
   windows:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'create' &&
+        github.event.ref_type == 'branch' &&
+        startsWith(github.event.ref, 'release/build-')
+      )
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
       UV_PYTHON_DOWNLOADS: never
+      REQUESTED_RELEASE_TYPE: ${{ inputs.release_type }}
+      REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
-      - name: Resolve release
+      - name: Validate release policy
         id: release
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_TYPE -eq "tag") {
-              $tag = $env:GITHUB_REF_NAME
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          if ($env:GITHUB_EVENT_NAME -ceq "create") {
+              $branchMatch = [regex]::Match(
+                  $env:GITHUB_REF,
+                  '^refs/heads/release/(build-\d{8}\.[1-9]\d*)$'
+              )
+              if (-not $branchMatch.Success) {
+                  throw "Maintenance create ref is not an allowed release/build-* branch: $env:GITHUB_REF"
+              }
+              $releaseType = "maintenance"
+              $tag = $branchMatch.Groups[1].Value
+              $confirmation = "RELEASE_MAINTENANCE"
+
+              $mainRefs = @(git ls-remote --exit-code origin "refs/heads/main")
+              if ($LASTEXITCODE -ne 0 -or $mainRefs.Count -ne 1) {
+                  throw "Could not resolve exactly one remote main head."
+              }
+              $remoteMainSha = ($mainRefs[0] -split '\s+')[0]
+              if ($remoteMainSha -cne $env:GITHUB_SHA) {
+                  throw (
+                      "Maintenance branch must be an exact alias of remote main: " +
+                      "main=$remoteMainSha run=$env:GITHUB_SHA."
+                  )
+              }
+          }
+          elseif ($env:GITHUB_EVENT_NAME -ceq "workflow_dispatch") {
+              if ($env:GITHUB_REF -cne "refs/heads/main") {
+                  throw "Dispatched releases must use the main branch, not $env:GITHUB_REF."
+              }
+              $releaseType = $env:REQUESTED_RELEASE_TYPE
+              $tag = $env:REQUESTED_RELEASE_TAG
+              $confirmation = $env:RELEASE_CONFIRMATION
           }
           else {
-              $version = python -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])"
-              $tag = "v$version"
+              throw "Unsupported release event: $env:GITHUB_EVENT_NAME"
+          }
+          $version = python -c @'
+          import pathlib
+          import tomllib
+          data = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))
+          print(data['project']['version'])
+          '@
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
+              throw "Could not read project.version from pyproject.toml."
           }
 
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          $publish = if ($LASTEXITCODE -eq 0) { "false" } else { "true" }
+          if ($releaseType -ceq "maintenance") {
+              if ($confirmation -cne "RELEASE_MAINTENANCE") {
+                  throw "Maintenance releases require confirmation=RELEASE_MAINTENANCE."
+              }
+              $match = [regex]::Match($tag, '^build-(\d{8})\.([1-9]\d*)$')
+              if (-not $match.Success) {
+                  throw "Maintenance tags must match build-YYYYMMDD.N with N >= 1."
+              }
+              try {
+                  [void][datetime]::ParseExact(
+                      $match.Groups[1].Value,
+                      "yyyyMMdd",
+                      [Globalization.CultureInfo]::InvariantCulture
+                  )
+              }
+              catch {
+                  throw "The maintenance tag contains an invalid calendar date."
+              }
+
+              $versionTag = "v$version"
+              git show-ref --verify --quiet "refs/tags/$versionTag"
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Maintenance builds cannot introduce app version $version. Publish $versionTag first."
+              }
+              git merge-base --is-ancestor $versionTag $env:GITHUB_SHA
+              if ($LASTEXITCODE -ne 0) {
+                  throw "The current app version tag $versionTag is not an ancestor of this commit."
+              }
+
+              $savedErrorActionPreference = $ErrorActionPreference
+              $ErrorActionPreference = "Continue"
+              $versionReleaseJson = gh release view $versionTag `
+                  --repo $env:GITHUB_REPOSITORY `
+                  --json isDraft,isPrerelease 2>&1 | Out-String
+              $versionReleaseStatus = $LASTEXITCODE
+              $ErrorActionPreference = $savedErrorActionPreference
+              if ($versionReleaseStatus -ne 0) {
+                  throw "Maintenance builds require an existing stable GitHub release for $versionTag."
+              }
+              try {
+                  $versionRelease = $versionReleaseJson | ConvertFrom-Json
+              }
+              catch {
+                  throw "Could not validate the GitHub release state for $versionTag."
+              }
+              if ($versionRelease.isDraft -or $versionRelease.isPrerelease) {
+                  throw "Maintenance builds require $versionTag to be a published, non-prerelease release."
+              }
+
+              $prerelease = "true"
+              $title = "Scheimpflug OptiMeter $version maintenance $tag"
+          }
+          elseif ($releaseType -ceq "version") {
+              if ($confirmation -cne "RELEASE_VERSION") {
+                  throw "Version releases require confirmation=RELEASE_VERSION."
+              }
+              $expectedTag = "v$version"
+              if ($tag -cne $expectedTag) {
+                  throw "Version release tag must exactly match pyproject.toml: expected $expectedTag, received $tag."
+              }
+
+              $prerelease = "false"
+              $title = "Scheimpflug OptiMeter $tag"
+          }
+          else {
+              throw "Unsupported release_type: $releaseType"
+          }
+
+          git show-ref --verify --quiet "refs/tags/$tag"
+          if ($LASTEXITCODE -eq 0) {
+              throw "Refusing to overwrite existing local/fetched tag $tag."
+          }
+
+          $remoteTag = git ls-remote --exit-code --tags origin "refs/tags/$tag"
+          $remoteStatus = $LASTEXITCODE
+          if ($remoteStatus -eq 0) {
+              throw "Refusing to overwrite existing remote tag $tag."
+          }
+          if ($remoteStatus -ne 2) {
+              throw "Could not prove that remote tag $tag is absent."
+          }
+
+          $encodedTag = [uri]::EscapeDataString($tag)
+          $savedErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+          $releaseLookup = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$encodedTag" 2>&1 | Out-String
+          $releaseStatus = $LASTEXITCODE
+          $ErrorActionPreference = $savedErrorActionPreference
+          if ($releaseStatus -eq 0) {
+              throw "Refusing to overwrite existing GitHub release $tag."
+          }
+          if ($releaseLookup -notmatch '\(HTTP 404\)') {
+              throw "Could not prove that GitHub release $tag is absent: $releaseLookup"
+          }
+
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "publish=$publish" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Output "Release tag: $tag; publish: $publish"
-          exit 0
+          "prerelease=$prerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "title=$title" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Output "Validated $releaseType release $tag for app version $version."
       - name: Install locked environment
-        if: steps.release.outputs.publish == 'true'
         run: |
           python -m pip install "uv==0.11.31"
           uv sync --frozen --python 3.12 --extra dev
       - name: Verify Python
-        if: steps.release.outputs.publish == 'true'
         run: >
           uv run --frozen python -c
           "import sys;
-          assert sys.version_info[:2] == (3, 12), sys.version"
+          from importlib.metadata import version;
+          from scheimpflug_optimeter import __version__;
+          assert sys.version_info[:2] == (3, 12), sys.version;
+          assert __version__ == version('scheimpflug-optimeter'),
+          (__version__, version('scheimpflug-optimeter'))"
       - name: Verify private source documents are not tracked
-        if: steps.release.outputs.publish == 'true'
         shell: pwsh
         run: >
           powershell.exe -NoProfile -ExecutionPolicy Bypass
           -File packaging/verify_public_sources.ps1
       - name: Lint
-        if: steps.release.outputs.publish == 'true'
         run: |
           uv run --frozen ruff check .
           uv run --frozen ruff format --check .
       - name: Test
-        if: steps.release.outputs.publish == 'true'
         env:
           QT_QPA_PLATFORM: offscreen
           MPLBACKEND: Agg
         run: uv run --frozen pytest
       - name: Build
-        if: steps.release.outputs.publish == 'true'
         run: uv run --frozen pyinstaller --noconfirm packaging/scheimpflug_optimeter.spec
       - name: Smoke portable application
-        if: steps.release.outputs.publish == 'true'
         shell: pwsh
         run: >
           powershell.exe -NoProfile -ExecutionPolicy Bypass
           -File packaging/smoke_portable.ps1
       - name: Assemble portable archive
-        if: steps.release.outputs.publish == 'true'
         shell: pwsh
+        env:
+          SCHEIMPFLUG_RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: >
           powershell.exe -NoProfile -ExecutionPolicy Bypass
           -File packaging/assemble_portable.ps1
-      - name: Publish
-        if: steps.release.outputs.publish == 'true'
+      - name: Publish append-only release
         shell: pwsh
         env:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.release.outputs.title }}
+          RELEASE_PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $remoteTag = git ls-remote --exit-code --tags origin "refs/tags/$env:RELEASE_TAG"
+          $remoteStatus = $LASTEXITCODE
+          if ($remoteStatus -eq 0) {
+              throw "Release target appeared during the build; refusing to use existing tag $env:RELEASE_TAG."
+          }
+          if ($remoteStatus -ne 2) {
+              throw "Could not revalidate remote tag absence before publishing."
+          }
+
+          $encodedTag = [uri]::EscapeDataString($env:RELEASE_TAG)
+          $savedErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+          $releaseLookup = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$encodedTag" 2>&1 | Out-String
+          $releaseStatus = $LASTEXITCODE
+          $ErrorActionPreference = $savedErrorActionPreference
+          if ($releaseStatus -eq 0) {
+              throw "Release target appeared during the build; refusing to overwrite $env:RELEASE_TAG."
+          }
+          if ($releaseLookup -notmatch '\(HTTP 404\)') {
+              throw "Could not revalidate release absence before publishing: $releaseLookup"
+          }
+
           $arguments = @(
               "release", "create", $env:RELEASE_TAG,
               "Scheimpflug-OptiMeter-windows-x64.zip",
               "Scheimpflug-OptiMeter-windows-x64.zip.sha256",
               "--generate-notes",
-              "--title", "Scheimpflug OptiMeter $env:RELEASE_TAG"
+              "--title", $env:RELEASE_TITLE,
+              "--target", $env:GITHUB_SHA
           )
-          if ($env:GITHUB_REF_TYPE -eq "tag") {
-              $arguments += "--verify-tag"
-          }
-          else {
-              $arguments += @("--target", $env:GITHUB_SHA)
+          if ($env:RELEASE_PRERELEASE -ceq "true") {
+              $arguments += "--prerelease"
           }
           gh @arguments
+          if ($LASTEXITCODE -ne 0) {
+              throw (
+                  "GitHub release creation failed and may have left a tag or partial draft. " +
+                  "Follow docs/release-policy.md; never overwrite blindly."
+              )
+          }
+      - name: Verify published release
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $tagRefs = @(
+              git ls-remote --exit-code --tags origin `
+                  "refs/tags/$env:RELEASE_TAG" `
+                  "refs/tags/$env:RELEASE_TAG^{}"
+          )
+          if ($LASTEXITCODE -ne 0 -or $tagRefs.Count -lt 1) {
+              throw "Published tag $env:RELEASE_TAG could not be resolved."
+          }
+          $peeledRef = @($tagRefs | Where-Object { $_ -match '\^\{\}$' })
+          $targetRef = if ($peeledRef.Count -eq 1) { $peeledRef[0] } else { $tagRefs[0] }
+          $tagSha = ($targetRef -split '\s+')[0]
+          if ($tagSha -cne $env:GITHUB_SHA) {
+              throw "Published tag target mismatch: expected $env:GITHUB_SHA, received $tagSha."
+          }
+
+          $releaseJson = gh release view $env:RELEASE_TAG `
+              --repo $env:GITHUB_REPOSITORY `
+              --json tagName,targetCommitish,isDraft,isImmutable,isPrerelease,assets
+          if ($LASTEXITCODE -ne 0) {
+              throw "Published release $env:RELEASE_TAG could not be inspected."
+          }
+          $release = $releaseJson | ConvertFrom-Json
+          $expectedPrerelease = $env:RELEASE_PRERELEASE -ceq "true"
+          if ($release.tagName -cne $env:RELEASE_TAG) {
+              throw "Published release tag name does not match $env:RELEASE_TAG."
+          }
+          if ($release.targetCommitish -cne $env:GITHUB_SHA) {
+              throw "Published release targetCommitish does not match $env:GITHUB_SHA."
+          }
+          if ($release.isDraft) {
+              throw "Published release unexpectedly remains a draft."
+          }
+          if ([bool]$release.isPrerelease -ne $expectedPrerelease) {
+              throw "Published release prerelease state does not match the selected policy."
+          }
+          if (-not $release.isImmutable) {
+              Write-Warning (
+                  "GitHub server-side release immutability is not enabled; " +
+                  "workflow overwrite guards remain in force."
+              )
+          }
+
+          $expectedAssets = @(
+              @{
+                  Name = "Scheimpflug-OptiMeter-windows-x64.zip"
+                  Path = "Scheimpflug-OptiMeter-windows-x64.zip"
+              },
+              @{
+                  Name = "Scheimpflug-OptiMeter-windows-x64.zip.sha256"
+                  Path = "Scheimpflug-OptiMeter-windows-x64.zip.sha256"
+              }
+          )
+          $remoteAssets = @($release.assets)
+          if ($remoteAssets.Count -ne $expectedAssets.Count) {
+              throw "Expected exactly two release assets; found $($remoteAssets.Count)."
+          }
+          foreach ($expected in $expectedAssets) {
+              $matchingAssets = @(
+                  $remoteAssets | Where-Object { $_.name -ceq $expected.Name }
+              )
+              if ($matchingAssets.Count -ne 1) {
+                  throw "Expected exactly one release asset named $($expected.Name)."
+              }
+              $remoteAsset = $matchingAssets[0]
+              $localAsset = Get-Item -LiteralPath $expected.Path
+              if ([int64]$remoteAsset.size -ne [int64]$localAsset.Length) {
+                  throw "Release asset size mismatch for $($expected.Name)."
+              }
+              if ($remoteAsset.state -cne "uploaded") {
+                  throw "Release asset $($expected.Name) is not in the uploaded state."
+              }
+              $localHash = (Get-FileHash -LiteralPath $expected.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+              $localDigest = "sha256:$localHash"
+              if ($remoteAsset.digest -cne $localDigest) {
+                  throw "Release asset digest mismatch for $($expected.Name)."
+              }
+          }

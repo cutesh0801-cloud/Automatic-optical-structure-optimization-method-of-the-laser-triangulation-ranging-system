@@ -12,6 +12,32 @@ $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Pat
 $applicationPath = (Resolve-Path -LiteralPath (Join-Path $repositoryRoot $ApplicationDirectory)).Path
 $archivePath = Join-Path $repositoryRoot $OutputArchive
 
+$versionLine = Select-String `
+    -LiteralPath (Join-Path $repositoryRoot "pyproject.toml") `
+    -Pattern '^version\s*=\s*"([^"]+)"\s*$' |
+    Select-Object -First 1
+if ($null -eq $versionLine) {
+    throw "Could not resolve project.version from pyproject.toml."
+}
+$applicationVersion = $versionLine.Matches[0].Groups[1].Value
+$gitCommit = (& git -C $repositoryRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($gitCommit)) {
+    throw "Could not resolve the source commit for build-info.json."
+}
+$releaseTag = $env:SCHEIMPFLUG_RELEASE_TAG
+if ([string]::IsNullOrWhiteSpace($releaseTag)) {
+    $releaseTag = "local"
+}
+$buildInfo = [ordered]@{
+    schema_version      = 1
+    application_version = $applicationVersion
+    release_tag         = $releaseTag
+    git_commit          = $gitCommit
+}
+$buildInfo |
+    ConvertTo-Json |
+    Set-Content -LiteralPath (Join-Path $applicationPath "build-info.json") -Encoding utf8
+
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "README.md") -Destination $applicationPath -Force
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Destination $applicationPath -Force
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "CHANGELOG.md") -Destination $applicationPath -Force

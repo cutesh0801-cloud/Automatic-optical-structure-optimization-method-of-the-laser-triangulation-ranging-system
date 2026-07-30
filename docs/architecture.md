@@ -7,6 +7,7 @@ duplicates optical formulas.
 ```text
 PySide6 UI
   ├─ workbook/CSV input ── workbook solver ── live 2D scene
+  ├─ static sensor profiles ── FOV/sampling/range-sensitivity comparison
   ├─ static sensor/lens profiles ── compatibility warnings
   ├─ canonical design ── SciPy/M-PSO optimizers
   ├─ calculated geometry ── 3D Scheimpflug scene

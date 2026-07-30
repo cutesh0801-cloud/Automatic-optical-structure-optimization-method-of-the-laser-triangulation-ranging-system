@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from typing import Literal
 
 from scipy.optimize import brentq
 
@@ -13,6 +14,7 @@ from scheimpflug_optimeter.models import (
     DesignMode,
     DesignSolution,
     LensProfile,
+    SensorImagingMetrics,
     SensorProfile,
     WorkbookDesignInput,
 )
@@ -120,7 +122,188 @@ def image_sensitivity(
     return numerator / denominator**2
 
 
-def solve_workbook_design(request: WorkbookDesignInput) -> DesignSolution:
+def _normalize_sensor_axis(axis: str) -> Literal["width", "height"]:
+    normalized = axis.lower()
+    if normalized in {"width", "horizontal", "x", "long"}:
+        return "width"
+    if normalized in {"height", "vertical", "y", "short"}:
+        return "height"
+    raise OpticalInputError(f"Unsupported sensor axis: {axis!r}")
+
+
+def _catalog_sensor(sensor_id: str) -> SensorProfile:
+    from scheimpflug_optimeter.hardware import get_sensor
+
+    try:
+        return get_sensor(sensor_id)
+    except KeyError as error:
+        raise OpticalInputError(str(error)) from error
+
+
+def calculate_sensor_imaging_metrics(
+    sensor: SensorProfile,
+    *,
+    sensor_axis: str,
+    alpha_deg: float,
+    beta_deg: float,
+    lo_mm: float,
+    fp_mm: float,
+    calculation_sensor_length_mm: float | None = None,
+) -> SensorImagingMetrics:
+    """Calculate full-active-sensor object coverage without camera I/O.
+
+    The selected range axis is inverted from the same nonlinear mapping used
+    by :func:`image_coordinate_mm`::
+
+        s(x) = x lo sin(beta) / (fp sin(alpha) - x sin(alpha + beta))
+
+    The orthogonal field is evaluated at the reference object plane with
+    magnification ``fp / lo``.  A full active axis that touches or crosses the
+    inverse-mapping pole has no finite range FOV and is reported as invalid.
+    """
+
+    _require_finite("alpha_deg", alpha_deg)
+    _require_finite("beta_deg", beta_deg)
+    _require_finite_positive("lo_mm", lo_mm)
+    _require_finite_positive("fp_mm", fp_mm)
+    if not 0.0 < alpha_deg < 90.0:
+        raise OpticalInputError("alpha_deg must be between 0 and 90 degrees.")
+    if not 0.0 < beta_deg < 90.0:
+        raise OpticalInputError("beta_deg must be between 0 and 90 degrees.")
+    if calculation_sensor_length_mm is not None:
+        _require_finite_positive("calculation_sensor_length_mm", calculation_sensor_length_mm)
+
+    axis = _normalize_sensor_axis(sensor_axis)
+    active_length = sensor.length_mm(axis)
+    active_pixels = sensor.width_px if axis == "width" else sensor.height_px
+    orthogonal_length = sensor.height_mm if axis == "width" else sensor.width_mm
+    orthogonal_pixels = sensor.height_px if axis == "width" else sensor.width_px
+    pitch_mm = sensor.pixel_pitch_um / 1000.0
+    half_length = active_length / 2.0
+
+    alpha = math.radians(alpha_deg)
+    beta = math.radians(beta_deg)
+    image_numerator = fp_mm * math.sin(alpha)
+    object_numerator = lo_mm * math.sin(beta)
+    coupling = math.sin(alpha + beta)
+    endpoint_denominators = (
+        image_numerator + half_length * coupling,
+        image_numerator - half_length * coupling,
+    )
+    denominator_scale = max(
+        1.0,
+        abs(image_numerator),
+        abs(half_length * coupling),
+    )
+    singular_limit = _DENOMINATOR_REL_TOL * denominator_scale
+    crosses_mapping_pole = (
+        abs(endpoint_denominators[0]) <= singular_limit
+        or abs(endpoint_denominators[1]) <= singular_limit
+        or endpoint_denominators[0] * endpoint_denominators[1] <= 0.0
+    )
+
+    magnification = abs(fp_mm / lo_mm)
+    orthogonal_fov = orthogonal_length / magnification
+    orthogonal_sampling = orthogonal_fov / orthogonal_pixels
+    center_sensitivity = abs(pitch_mm * object_numerator / image_numerator)
+    warnings: list[str] = []
+    mismatch_tolerance = max(1e-9, active_length * 1e-9)
+    if (
+        calculation_sensor_length_mm is not None
+        and abs(calculation_sensor_length_mm - active_length) > mismatch_tolerance
+    ):
+        warnings.append(
+            "The calculation sensor length differs from the selected profile's "
+            f"{axis} active length ({calculation_sensor_length_mm:.6g} mm vs "
+            f"{active_length:.6g} mm). Camera metrics use the profile dimension."
+        )
+
+    if crosses_mapping_pole:
+        invalid_reason = (
+            "The selected active sensor axis reaches or crosses the inverse "
+            "object-to-image mapping pole; a finite full-sensor range FOV is undefined."
+        )
+        horizontal_fov = orthogonal_fov if axis == "height" else None
+        vertical_fov = orthogonal_fov if axis == "width" else None
+        horizontal_sampling = orthogonal_sampling if axis == "height" else None
+        vertical_sampling = orthogonal_sampling if axis == "width" else None
+        return SensorImagingMetrics(
+            sensor=sensor,
+            sensor_axis=axis,
+            valid=False,
+            horizontal_fov_mm=horizontal_fov,
+            vertical_fov_mm=vertical_fov,
+            horizontal_sampling_mm_per_px=horizontal_sampling,
+            vertical_sampling_mm_per_px=vertical_sampling,
+            range_min_offset_mm=None,
+            range_max_offset_mm=None,
+            range_sensitivity_near_mm_per_px=None,
+            range_sensitivity_center_mm_per_px=center_sensitivity,
+            range_sensitivity_far_mm_per_px=None,
+            range_sensitivity_worst_mm_per_px=None,
+            invalid_reason=invalid_reason,
+            warnings=tuple(warnings),
+        )
+
+    sensor_coordinates = (-half_length, half_length)
+    object_offsets = tuple(
+        coordinate * object_numerator / (image_numerator - coordinate * coupling)
+        for coordinate in sensor_coordinates
+    )
+    range_min = min(object_offsets)
+    range_max = max(object_offsets)
+    range_fov = range_max - range_min
+    range_average_sampling = range_fov / active_pixels
+
+    def distance_per_pixel(object_offset_mm: float) -> float:
+        sensitivity = abs(
+            image_sensitivity(
+                object_offset_mm,
+                alpha_deg=alpha_deg,
+                beta_deg=beta_deg,
+                lo_mm=lo_mm,
+                fp_mm=fp_mm,
+            )
+        )
+        return pitch_mm / sensitivity
+
+    near_sensitivity = distance_per_pixel(range_min)
+    far_sensitivity = distance_per_pixel(range_max)
+    worst_sensitivity = max(near_sensitivity, center_sensitivity, far_sensitivity)
+    if axis == "width":
+        horizontal_fov = range_fov
+        vertical_fov = orthogonal_fov
+        horizontal_sampling = range_average_sampling
+        vertical_sampling = orthogonal_sampling
+    else:
+        horizontal_fov = orthogonal_fov
+        vertical_fov = range_fov
+        horizontal_sampling = orthogonal_sampling
+        vertical_sampling = range_average_sampling
+
+    return SensorImagingMetrics(
+        sensor=sensor,
+        sensor_axis=axis,
+        valid=True,
+        horizontal_fov_mm=horizontal_fov,
+        vertical_fov_mm=vertical_fov,
+        horizontal_sampling_mm_per_px=horizontal_sampling,
+        vertical_sampling_mm_per_px=vertical_sampling,
+        range_min_offset_mm=range_min,
+        range_max_offset_mm=range_max,
+        range_sensitivity_near_mm_per_px=near_sensitivity,
+        range_sensitivity_center_mm_per_px=center_sensitivity,
+        range_sensitivity_far_mm_per_px=far_sensitivity,
+        range_sensitivity_worst_mm_per_px=worst_sensitivity,
+        warnings=tuple(warnings),
+    )
+
+
+def solve_workbook_design(
+    request: WorkbookDesignInput,
+    *,
+    sensor: SensorProfile | None = None,
+) -> DesignSolution:
     """Reproduce the thin-lens formulas in ``구조설계_rev.1.xlsx``.
 
     The compatibility solver intentionally keeps the workbook convention
@@ -282,6 +465,28 @@ def solve_workbook_design(request: WorkbookDesignInput) -> DesignSolution:
     if request.fov_mm is not None:
         diagnostics.append(("fov_mm", request.fov_mm))
 
+    selected_sensor = sensor if sensor is not None else _catalog_sensor(request.sensor_id)
+    sensor_metrics = calculate_sensor_imaging_metrics(
+        selected_sensor,
+        sensor_axis=request.sensor_axis,
+        alpha_deg=request.alpha_deg,
+        beta_deg=beta_deg,
+        lo_mm=lo,
+        fp_mm=fp,
+        calculation_sensor_length_mm=request.sensor_length_mm,
+    )
+    warnings = list(sensor_metrics.warnings)
+    if not sensor_metrics.valid and sensor_metrics.invalid_reason is not None:
+        warnings.append(sensor_metrics.invalid_reason)
+    worst_distance_per_pixel = sensor_metrics.range_sensitivity_worst_mm_per_px
+    if worst_distance_per_pixel is None:
+        min_sensitivity = 0.0
+        distance_per_sensor = math.inf
+    else:
+        pixel_pitch_mm = selected_sensor.pixel_pitch_um / 1000.0
+        distance_per_sensor = worst_distance_per_pixel / pixel_pitch_mm
+        min_sensitivity = 1.0 / distance_per_sensor
+
     return DesignSolution(
         mode=DesignMode.WORKBOOK,
         request=request,
@@ -300,13 +505,15 @@ def solve_workbook_design(request: WorkbookDesignInput) -> DesignSolution:
         rear_exact_mm=rear,
         width_proxy_mm=width,
         rear_proxy_mm=rear,
-        sensitivity_sensor_mm_per_object_mm=0.0,
-        distance_per_sensor_mm=math.inf,
-        distance_per_pixel_mm=None,
+        sensitivity_sensor_mm_per_object_mm=min_sensitivity,
+        distance_per_sensor_mm=distance_per_sensor,
+        distance_per_pixel_mm=worst_distance_per_pixel,
         ray_intercept_s_mm=ray_intercept,
         baseline_mm=baseline,
         violations=tuple(violations),
+        warnings=tuple(warnings),
         diagnostics=tuple(diagnostics),
+        sensor_metrics=sensor_metrics,
     )
 
 
@@ -584,6 +791,23 @@ def solve_canonical_design(
         if pixel_pitch_um is not None and math.isfinite(distance_per_sensor)
         else None
     )
+    sensor_metrics = (
+        calculate_sensor_imaging_metrics(
+            sensor,
+            sensor_axis=request.sensor_axis,
+            alpha_deg=alpha_deg,
+            beta_deg=beta_deg,
+            lo_mm=lo,
+            fp_mm=fp,
+            calculation_sensor_length_mm=sensor_length,
+        )
+        if sensor is not None
+        else None
+    )
+    if sensor_metrics is not None:
+        warnings.extend(sensor_metrics.warnings)
+        if not sensor_metrics.valid and sensor_metrics.invalid_reason is not None:
+            warnings.append(sensor_metrics.invalid_reason)
     if width_exact > width_proxy + 1e-9 or rear_exact > rear_proxy + 1e-9:
         warnings.append(
             "Exact asymmetric image endpoints exceed the paper's centred package proxy."
@@ -649,4 +873,5 @@ def solve_canonical_design(
                 ),
             ),
         ),
+        sensor_metrics=sensor_metrics,
     )
