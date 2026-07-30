@@ -5,8 +5,21 @@ All notable changes to this project are documented here.
 ## Unreleased
 
 Product-version releases are intentionally reserved for reviewed, large
-updates. Routine work remains unreleased unless a maintainer explicitly
-authorizes an append-only maintenance build.
+updates. Every completed routine fix, refinement, or small feature is released
+as a new append-only maintenance build while the application version remains
+unchanged.
+
+- Removed the unsupported 3D laser-plane extrusion; the workbook model now
+  remains a single laser irradiation line in both 2D and 3D.
+- Removed the unmapped `γ/δ` readout, a duplicate ideal-focus plane and an
+  invented hinge reference that were not derived from workbook inputs.
+- Removed persistent text, numeric ticks, callouts and legends from inside the
+  3D canvas so geometry remains readable while rotating and zooming.
+- Made the desktop and 2D-scene typography respond continuously to the window
+  and viewport size instead of using one enlarged fixed font.
+- Deferred NumPy/Matplotlib until the 3D tab is opened and SciPy until a
+  canonical root solve or optimization actually needs it; the default
+  workbook screen no longer pays for unused numerical stacks.
 
 ## 0.1.0 maintenance build 2026-07-30 (`build-20260730.2`)
 
@@ -19,7 +32,7 @@ authorizes an append-only maintenance build.
 - Kept laser, lens and sensor cues visible at extreme 2D zoom levels while
   reducing callout-layout latency.
 - Reworked the 3D view with schematic camera, lens, sensor and laser bodies,
-  labelled planes, normals, a legend and head/full-assembly view controls.
+  labelled optical planes, normals, a legend and head/full-assembly controls.
 - Added per-profile Basler FOV, object sampling and geometric range-sensitivity
   calculations and comparison UI.
 - Added an original Scheimpflug geometry logo to the application, Windows
@@ -31,7 +44,8 @@ authorizes an append-only maintenance build.
 ## 0.1.0
 
 - Added workbook-compatible and canonical Scheimpflug design solvers.
-- Added live 2D optical geometry and 3D full-focus visualization.
+- Added live 2D optical geometry and a schematic 3D view of the same
+  meridional calculation.
 - Added static Basler sensor and Edmund Optics lens specification profiles.
 - Added deterministic SciPy and M-PSO optimization paths.
 - Added schema-v1 project files and Windows portable packaging.

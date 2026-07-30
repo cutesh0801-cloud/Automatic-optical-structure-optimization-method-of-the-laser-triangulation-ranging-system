@@ -25,8 +25,8 @@ Implementation scope:
 - The workbook/CSV equations are authoritative for the default calculation.
 - The 2022 paper supports interpretation of the optical geometry and the
   optional optimization comparison.
-- The 2025 three-dimensional paper supports the optional 3D full-focus
-  relationships.
-- The 2024 thick-lens and 2025 atmospheric-observation papers provide
-  background context only. Their acquisition, calibration and observation
-  systems are not implemented.
+- The 2024 thick-lens and both 2025 papers provide background context only.
+  Their acquisition, calibration, observation and two-axis full-focus models
+  are not implemented. In particular, the 2025 paper's object-plane
+  tilt/pan variables are not interchangeable with this workbook's 2D
+  observation and sensor angles.

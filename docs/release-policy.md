@@ -7,17 +7,19 @@ with `workflow_dispatch` from `main`. A narrowly scoped
 when that branch is an exact SHA alias of the latest remote `main`.
 
 Routine fixes, refinements, and small feature additions are maintenance work:
-they do not justify an application-version change or a product-version
-release. A version is changed only for a large, coherent update whose
-user-visible scope warrants a new product release, and only after the version
-checklist below is explicitly reviewed. “Maintenance” here describes release
-policy and must not be confused with a SemVer `MINOR` number.
+each completed maintenance update must be published as a new
+`build-YYYYMMDD.N` prerelease, but it must not change the application version
+or create a product-version release. A version is changed only for a large,
+coherent update whose user-visible scope warrants a new product release, and
+only after the version checklist below is explicitly reviewed. “Maintenance”
+here describes release policy and must not be confused with a SemVer `MINOR`
+number.
 
 ## Release classes
 
 | Class | Purpose | Tag | App version | GitHub release |
 | --- | --- | --- | --- | --- |
-| Maintenance | Rebuild or package the already released app version from a later maintenance commit | `build-YYYYMMDD.N` | Must remain at an existing released `pyproject.toml` version | Prerelease |
+| Maintenance | Publish each completed routine fix, refinement, or small feature without changing the released app version | `build-YYYYMMDD.N` | Must remain at an existing released `pyproject.toml` version | Prerelease |
 | Version | Publish a deliberate application version | Exactly `v<project.version>` from `pyproject.toml` | Changed and reviewed before dispatch | Normal release |
 
 `N` starts at 1 and increases when more than one maintenance build is needed
@@ -59,8 +61,9 @@ only; there is no update or asset-clobber path.
 
 Before dispatch:
 
-1. Confirm the selected ref is `main` and includes the intended maintenance
-   commits.
+1. Confirm the completed maintenance change has been reviewed and merged, and
+   the selected ref is the current `main` containing only the intended release
+   scope since the previous build.
 2. Confirm `project.version` in `pyproject.toml` has not changed from the
    already published version.
 3. Confirm the corresponding `v<project.version>` tag is an ancestor of

@@ -110,15 +110,3 @@ Average object sampling on either display axis is its calculated FOV divided
 by the corresponding native pixel count. These are geometric sampling
 metrics; diffraction, MTF, blur, pixel aperture, noise and quantum efficiency
 are outside the model.
-
-## Three-dimensional full focus
-
-For object tilts `α, β`, magnification `m`, and sensor tilts `γ, δ`:
-
-```text
-tan(γ) = m tan(α)
-tan(δ) = m (cos(γ) / cos(α)) tan(β)
-```
-
-The exact trigonometric form is authoritative. Small-angle results are shown
-only as a comparison.

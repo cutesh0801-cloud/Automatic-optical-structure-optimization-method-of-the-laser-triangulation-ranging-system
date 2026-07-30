@@ -6,8 +6,6 @@ import math
 from collections.abc import Iterable
 from typing import Literal
 
-from scipy.optimize import brentq
-
 from scheimpflug_optimeter.models import (
     ConstraintViolation,
     DesignInput,
@@ -55,6 +53,10 @@ def solve_alpha(focal_length_mm: float, v_mm: float) -> float:
             "focal_length_mm / v_mm must satisfy "
             f"0 < f/V < {_MAX_ALPHA_RATIO:.15f}; received {ratio:.15g}."
         )
+
+    # Workbook-only calculations do not need SciPy. Keep this heavyweight
+    # import on the one path that actually uses its root finder.
+    from scipy.optimize import brentq
 
     upper = math.atan(math.sqrt(2.0))
 

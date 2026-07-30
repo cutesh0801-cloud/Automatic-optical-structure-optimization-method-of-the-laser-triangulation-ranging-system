@@ -5,10 +5,12 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from itertools import product
+from typing import Any
 
-import numpy as np
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -16,66 +18,62 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from scheimpflug_optimeter.optics import full_focus_angles as _core_full_focus_angles
-
 from .scene import Point2D, SceneSnapshot
 
-try:
-    from matplotlib import font_manager, rcParams
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-    from matplotlib.figure import Figure
-    from matplotlib.lines import Line2D
-    from matplotlib.patches import Patch
-    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-except ImportError:  # pragma: no cover - required in packaged builds.
-    FigureCanvasQTAgg = None
-    Figure = None
+np: Any | None = None
+FigureCanvasQTAgg: Any | None = None
+Figure: Any | None = None
+NullFormatter: Any | None = None
+Poly3DCollection: Any | None = None
+_PLOT_IMPORT_ERROR: ImportError | None = None
 
 
 _ELEVATION_DEG = 24.0
 _AZIMUTH_DEG = -56.0
-_X = np.array((1.0, 0.0, 0.0))
-_Y = np.array((0.0, 1.0, 0.0))
-_Z = np.array((0.0, 0.0, 1.0))
+_X: Any = (1.0, 0.0, 0.0)
+_Y: Any = (0.0, 1.0, 0.0)
+_Z: Any = (0.0, 0.0, 1.0)
 _COLORS = {
-    "object": "#2fa86f",
+    "target": "#2fa86f",
     "lens_plane": "#2f83c5",
     "sensor": "#e3a008",
-    "focus": "#ed7d31",
     "laser": "#d92d20",
     "camera": "#40566f",
     "lens": "#48a9dc",
     "ray": "#7254b3",
     "scheimpflug": "#b76e00",
-    "hinge": "#8b4bb3",
     "axis": "#66788a",
-    "text": "#17212b",
-    "muted": "#5b6b7a",
 }
 
 
-def full_focus_angles(
-    magnification: float,
-    alpha_deg: float,
-    beta_deg: float,
-) -> tuple[float, float]:
-    """Expose the exact core helper without duplicating its calculation."""
+def _load_plot_backend() -> bool:
+    """Load the 3D numerical/rendering stack only when the tab is opened."""
 
-    return _core_full_focus_angles(magnification, alpha_deg, beta_deg)
-
-
-def _configure_plot_font() -> bool:
-    if Figure is None:
-        return False
-    for family in ("Malgun Gothic", "Noto Sans CJK KR", "AppleGothic"):
-        try:
-            font_manager.findfont(family, fallback_to_default=False)
-        except ValueError:
-            continue
-        rcParams["font.family"] = family
-        rcParams["axes.unicode_minus"] = False
+    global Figure, FigureCanvasQTAgg, NullFormatter, Poly3DCollection
+    global _X, _Y, _Z
+    global _PLOT_IMPORT_ERROR, np
+    if Figure is not None:
         return True
-    return False
+    if _PLOT_IMPORT_ERROR is not None:
+        return False
+    try:
+        import numpy as numpy_module
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as canvas_class
+        from matplotlib.figure import Figure as figure_class
+        from matplotlib.ticker import NullFormatter as null_formatter_class
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection as poly_collection_class
+    except ImportError as exc:  # pragma: no cover - required in packaged builds.
+        _PLOT_IMPORT_ERROR = exc
+        return False
+    np = numpy_module
+    FigureCanvasQTAgg = canvas_class
+    Figure = figure_class
+    NullFormatter = null_formatter_class
+    Poly3DCollection = poly_collection_class
+    _X = np.array((1.0, 0.0, 0.0))
+    _Y = np.array((0.0, 1.0, 0.0))
+    _Z = np.array((0.0, 0.0, 1.0))
+    return True
 
 
 def _point3(point: Point2D) -> np.ndarray:
@@ -112,14 +110,14 @@ class ThreeDWidget(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._snapshot: SceneSnapshot | None = None
-        self._alpha_deg = self._beta_deg = 0.0
-        self._magnification = 1.0
-        self._korean_labels = _configure_plot_font()
         self._fit_points: list[np.ndarray] = []
         self._head_points: list[np.ndarray] = []
         self._components: dict[str, list[object]] = {}
         self._beam_was_clipped = False
         self._view_mode = "head"
+        self.figure: Any | None = None
+        self.canvas: Any | None = None
+        self.axes: Any | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 10)
@@ -161,28 +159,73 @@ class ThreeDWidget(QWidget):
             controls.addWidget(button)
         layout.addLayout(controls)
 
-        if Figure is None or FigureCanvasQTAgg is None:
-            self.canvas = None
-            message = QLabel("3D 보기를 사용하려면 Matplotlib Qt backend가 필요합니다.")
-            message.setWordWrap(True)
-            layout.addWidget(message)
-            self._set_controls_enabled(False)
-            return
+        info_bar = QFrame()
+        info_bar.setObjectName("threeDInfoBar")
+        info_bar.setStyleSheet(
+            "QFrame#threeDInfoBar {"
+            "  background: #f7f9fc;"
+            "  border: 1px solid #d8e0e8;"
+            "  border-radius: 7px;"
+            "}"
+            "QLabel {"
+            "  color: #33475b;"
+            "  padding: 5px 8px;"
+            "}"
+        )
+        info_layout = QHBoxLayout(info_bar)
+        info_layout.setContentsMargins(4, 2, 4, 2)
+        info_layout.setSpacing(8)
+        self.scene_key = QLabel(self._scene_key_markup())
+        self.scene_key.setObjectName("threeDSceneKey")
+        self.scene_key.setWordWrap(True)
+        self.scene_key.setAccessibleName("3D 장면 색상과 선 범례")
+        self.scene_key.setAccessibleDescription(
+            "기준 대상, 렌즈, 센서, 레이저 중심 광선과 계산 교선을 색상 및 선 모양으로 구분합니다."
+        )
+        self.status_card = QLabel(
+            self._text("계산 가능한 설계 입력을 기다리는 중", "Waiting for a valid design")
+        )
+        self.status_card.setObjectName("threeDStatusCard")
+        self.status_card.setWordWrap(True)
+        self.status_card.setMinimumWidth(260)
+        self.status_card.setAccessibleName("3D 장면 상태")
+        info_layout.addWidget(self.scene_key, 3)
+        info_layout.addWidget(self.status_card, 2)
+        layout.addWidget(info_bar)
 
-        self.figure = Figure(figsize=(9.0, 6.4), constrained_layout=False)
-        self.figure.set_facecolor("#ffffff")
-        self.canvas = FigureCanvasQTAgg(self.figure)
-        self.canvas.setAccessibleName("3D Scheimpflug 광학 장면")
-        self.axes = self.figure.add_subplot(111, projection="3d")
-        self.axes.set_position((0.025, 0.125, 0.95, 0.755))
-        layout.addWidget(self.canvas, 1)
+        self.plot_host = QWidget()
+        self.plot_layout = QVBoxLayout(self.plot_host)
+        self.plot_layout.setContentsMargins(0, 0, 0, 0)
+        self.plot_placeholder = QLabel("3D 탭을 열면 장면 렌더러를 준비합니다.")
+        self.plot_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.plot_placeholder.setAccessibleName("3D 장면 준비 상태")
+        self.plot_layout.addWidget(self.plot_placeholder, 1)
+        layout.addWidget(self.plot_host, 1)
         self.head_button.clicked.connect(self.fit_head)
         self.fit_button.clicked.connect(self.fit_view)
         self.view_button.clicked.connect(self.reset_view)
-        self._draw_empty()
+        self._set_controls_enabled(False)
 
-    def _text(self, korean: str, english: str) -> str:
-        return korean if self._korean_labels else english
+    def _text(self, korean: str, _english: str) -> str:
+        """Return the Korean-first UI copy; the canvas itself contains no text."""
+
+        return korean
+
+    def _scene_key_markup(self) -> str:
+        planes = (
+            ("target", "■", "기준 대상", "Reference target"),
+            ("lens_plane", "■", "렌즈면", "Lens"),
+            ("sensor", "■", "센서면", "Sensor"),
+        )
+        lines = (
+            ("laser", "━", "레이저 중심 광선", "Laser centre ray"),
+            ("scheimpflug", "━", "Scheimpflug 교선", "Scheimpflug line"),
+        )
+        entries = [
+            (f"<span style='color:{_COLORS[color]}'>{glyph}</span> {self._text(korean, english)}")
+            for color, glyph, korean, english in (*planes, *lines)
+        ]
+        return " &nbsp;·&nbsp; ".join(entries)
 
     def _view_button(
         self,
@@ -202,6 +245,28 @@ class ThreeDWidget(QWidget):
     def _set_controls_enabled(self, enabled: bool) -> None:
         for button in (self.head_button, self.fit_button, self.view_button):
             button.setEnabled(enabled)
+
+    def _ensure_canvas(self) -> bool:
+        """Create the Matplotlib canvas once, on first visible 3D render."""
+
+        if self.canvas is not None:
+            return True
+        if not _load_plot_backend():
+            self.plot_placeholder.setText(
+                "3D 보기를 준비하지 못했습니다. Matplotlib 설치 상태를 확인하세요."
+            )
+            self.plot_placeholder.setAccessibleDescription(str(_PLOT_IMPORT_ERROR or ""))
+            return False
+        self.figure = Figure(figsize=(9.0, 6.4), constrained_layout=False)
+        self.figure.set_facecolor("#ffffff")
+        self.canvas = FigureCanvasQTAgg(self.figure)
+        self.canvas.setAccessibleName("3D Scheimpflug 광학 장면")
+        self.axes = self.figure.add_subplot(111, projection="3d")
+        self.axes.set_position((0.015, 0.025, 0.97, 0.95))
+        self.plot_layout.replaceWidget(self.plot_placeholder, self.canvas)
+        self.plot_placeholder.hide()
+        self.plot_placeholder.deleteLater()
+        return True
 
     def _register(self, name: str, *artists: object) -> None:
         self._components.setdefault(name, []).extend(artists)
@@ -228,52 +293,52 @@ class ThreeDWidget(QWidget):
         self._register(name, artist)
         return artist
 
-    def _callout(
-        self,
-        name: str,
-        anchor: np.ndarray,
-        position: np.ndarray,
-        text: str,
-        color: str,
-    ) -> None:
-        self._line(name, (anchor, position), color, 0.9, alpha=0.82)
-        label = self.axes.text(
-            *position,
-            text,
-            color=_COLORS["text"],
-            fontsize=8.2,
-            ha="center",
-            va="center",
-            bbox={
-                "boxstyle": "round,pad=0.24",
-                "facecolor": "white",
-                "edgecolor": color,
-                "alpha": 0.94,
-                "linewidth": 0.9,
-            },
-            zorder=30,
-            clip_on=True,
+    def _refresh_status(self) -> None:
+        snapshot = self._snapshot
+        if snapshot is None:
+            self.status_card.setText(
+                self._text(
+                    "계산 가능한 설계 입력을 기다리는 중",
+                    "Waiting for a valid design",
+                )
+            )
+            self.status_card.setStyleSheet("color: #5b6b7a; font-weight: 600;")
+            return
+
+        validity = (
+            self._text("유효", "Valid") if snapshot.valid else self._text("제약 경고", "Warning")
         )
-        self._register(name, label)
-        self._fit_points.append(position)
+        view = (
+            self._text("광학 헤드", "Optical head")
+            if self._view_mode == "head"
+            else self._text("전체 구조", "Full assembly")
+        )
+        parts = [
+            validity,
+            view,
+            f"WD={snapshot.working_distance_mm:.1f} mm",
+        ]
+        if self._beam_was_clipped:
+            parts.append(
+                self._text(
+                    f"빔 원거리 구간 생략 · 실제 Z={snapshot.laser_endpoints[1].z_mm:.1f} mm",
+                    f"Remote beam clipped · actual Z={snapshot.laser_endpoints[1].z_mm:.1f} mm",
+                )
+            )
+        self.status_card.setText(" · ".join(parts))
+        color = "#9a3412" if not snapshot.valid else "#245c44"
+        self.status_card.setStyleSheet(f"color: {color}; font-weight: 600;")
 
     def set_geometry(
         self,
         snapshot: SceneSnapshot | None,
         *,
-        alpha_deg: float,
-        beta_deg: float,
-        magnification: float | None = None,
         render: bool = True,
     ) -> None:
         """Store a calculation snapshot and render only while this tab is active."""
 
         self._snapshot = snapshot
-        self._alpha_deg = alpha_deg
-        self._beta_deg = beta_deg
-        if magnification is not None and magnification > 0:
-            self._magnification = magnification
-        if not render or self.canvas is None:
+        if not render or not self._ensure_canvas():
             return
         self._draw_empty() if snapshot is None else self._draw_snapshot(snapshot)
 
@@ -282,20 +347,14 @@ class ThreeDWidget(QWidget):
         for axis in (self.axes.xaxis, self.axes.yaxis, self.axes.zaxis):
             axis.pane.set_facecolor((0.94, 0.96, 0.98, 0.72))
             axis.pane.set_edgecolor("#cbd5df")
+            axis.set_major_formatter(NullFormatter())
+            axis.set_minor_formatter(NullFormatter())
         self.axes.grid(True, color="#d7dfe7", linewidth=0.55, alpha=0.75)
-        self.axes.tick_params(labelsize=8, colors=_COLORS["muted"], pad=1)
-        self.axes.set_xlabel(
-            self._text("X — 카메라 기준선 (mm)", "X — camera baseline (mm)"),
-            labelpad=9,
-        )
-        self.axes.set_ylabel(
-            self._text("Y — 화면 밖 방향 (mm)", "Y — out of section (mm)"),
-            labelpad=9,
-        )
-        self.axes.set_zlabel(
-            self._text("Z — 레이저 방향 (mm)", "Z — laser direction (mm)"),
-            labelpad=9,
-        )
+        self.axes.tick_params(labelbottom=False, labelleft=False, labelright=False, labeltop=False)
+        self.axes.set_xlabel("")
+        self.axes.set_ylabel("")
+        self.axes.set_zlabel("")
+        self.axes.set_title("")
         self.axes.set_box_aspect((1.0, 1.0, 1.0), zoom=1.08)
 
     def _draw_empty(self) -> None:
@@ -305,17 +364,13 @@ class ThreeDWidget(QWidget):
         self._components.clear()
         self._fit_points.clear()
         self._head_points.clear()
-        self.axes.set_title(
-            self._text(
-                "계산 가능한 설계 입력이 필요합니다.",
-                "Enter a calculable optical design.",
-            )
-        )
+        self._beam_was_clipped = False
         self._style_axes()
         for setter in (self.axes.set_xlim, self.axes.set_ylim, self.axes.set_zlim):
             setter(-10.0, 10.0)
         self.axes.view_init(elev=_ELEVATION_DEG, azim=_AZIMUTH_DEG)
         self._set_controls_enabled(False)
+        self._refresh_status()
         self.canvas.draw_idle()
 
     def _plane(
@@ -328,9 +383,7 @@ class ThreeDWidget(QWidget):
         half_second: float,
         color: str,
         opacity: float,
-        label: str,
         normal_hint: np.ndarray,
-        label_shift: np.ndarray,
         edge_style: str = "-",
     ) -> None:
         first = _unit(first, _X)
@@ -362,7 +415,6 @@ class ThreeDWidget(QWidget):
             linewidth=1.25,
         )
         self._register(name, face, arrow)
-        self._callout(name, center, center + label_shift, label, color)
         self._fit_points.extend((*corners, center + normal * normal_length))
 
     def _box(
@@ -435,13 +487,6 @@ class ThreeDWidget(QWidget):
             edgecolor="#1f6389",
         )
         self._register("lens", surface)
-        self._callout(
-            "lens",
-            center,
-            center - _Y * radius * 1.9 - tangent * radius * 0.55,
-            self._text("렌즈", "Lens"),
-            _COLORS["lens"],
-        )
         self._fit_points.extend(
             (
                 center + tangent * radius,
@@ -485,34 +530,22 @@ class ThreeDWidget(QWidget):
             ),
         )
         sensor_half = max(sensor_interval * 0.65, plane_half * 0.26)
-        try:
-            gamma, delta = full_focus_angles(
-                self._magnification,
-                self._alpha_deg,
-                self._beta_deg,
-            )
-        except ValueError:
-            gamma = delta = math.nan
 
         beam_direction = _unit(target - emitter, _Z)
-        laser_plane_center = (emitter + target) / 2.0
-        laser_half = max(
-            plane_half,
-            min(float(np.linalg.norm(target - emitter)) / 2.0, plane_half * 2.0),
-        )
         plane_specs = (
+            # A schematic target plate marks the nominal range only. It is not
+            # presented as the Scheimpflug object plane because target pose is
+            # not an input to the workbook model.
             (
-                "object_plane",
+                "target_plane",
                 target,
                 _X,
                 _Y,
                 plane_half * 1.05,
                 plane_half * 0.8,
-                "object",
+                "target",
                 0.15,
-                self._text("물체 평면", "Object plane"),
                 _Z,
-                _Z * plane_half * 0.08,
                 "-",
             ),
             (
@@ -524,31 +557,8 @@ class ThreeDWidget(QWidget):
                 plane_half * 0.66,
                 "lens_plane",
                 0.13,
-                self._text("렌즈 평면", "Lens plane"),
                 camera_axis,
-                lens_tangent * plane_half * 0.68 + _Y * plane_half * 0.48,
                 "-",
-            ),
-            (
-                "ideal_focus_plane",
-                image,
-                sensor_tangent,
-                _Y,
-                sensor_half * 1.24,
-                sensor_half,
-                "focus",
-                0.07,
-                self._text(
-                    "이상 초점면\n(센서와 일치)",
-                    "Ideal focal plane\n(coincident with sensor)",
-                ),
-                sensor_normal,
-                (
-                    sensor_tangent * sensor_half * 1.45
-                    + sensor_normal * sensor_half * 0.15
-                    + _Y * sensor_half * 1.2
-                ),
-                "--",
             ),
             (
                 "sensor_plane",
@@ -559,27 +569,7 @@ class ThreeDWidget(QWidget):
                 sensor_half * 0.76,
                 "sensor",
                 0.22,
-                self._text("실제 센서 평면", "Actual sensor plane"),
                 sensor_normal,
-                (
-                    -sensor_tangent * sensor_half * 1.05
-                    + sensor_normal * sensor_half * 0.12
-                    - _Y * sensor_half * 1.12
-                ),
-                "-",
-            ),
-            (
-                "laser_plane",
-                laser_plane_center,
-                beam_direction,
-                _Y,
-                laser_half,
-                plane_half * 0.55,
-                "laser",
-                0.055,
-                self._text("레이저 평면", "Laser plane"),
-                _X,
-                _X * plane_half * 0.15,
                 "-",
             ),
         )
@@ -592,9 +582,7 @@ class ThreeDWidget(QWidget):
             half_second,
             color_key,
             opacity,
-            label,
             normal_hint,
-            shift,
             style,
         ) in plane_specs:
             self._plane(
@@ -606,9 +594,7 @@ class ThreeDWidget(QWidget):
                 half_second,
                 _COLORS[color_key],
                 opacity,
-                label,
                 normal_hint,
-                shift,
                 style,
             )
 
@@ -626,18 +612,6 @@ class ThreeDWidget(QWidget):
             (body_depth / 2.0, body_width / 2.0, body_height / 2.0),
             _COLORS["camera"],
             "#27394c",
-        )
-        self._callout(
-            "camera_body",
-            camera_center,
-            (
-                camera_center
-                + camera_axis * body_depth * 0.42
-                + _Y * body_height * 1.05
-                - lens_tangent * body_width * 0.45
-            ),
-            self._text("카메라 바디", "Camera body"),
-            _COLORS["camera"],
         )
         self._box(
             "sensor_body",
@@ -662,30 +636,12 @@ class ThreeDWidget(QWidget):
             "#b42318",
             "#67140e",
         )
-        self._callout(
-            "laser_emitter",
-            emitter_center,
-            emitter_center - _Y * emitter_size * 1.7 + emitter_side * emitter_size,
-            self._text("레이저 발광기", "Laser emitter"),
-            _COLORS["laser"],
-        )
 
         actual_beam_end = _point3(snapshot.laser_endpoints[1])
         beam_end, self._beam_was_clipped = _clip(emitter, actual_beam_end, span * 1.35)
         self._line("laser_beam_glow", (emitter, beam_end), _COLORS["laser"], 6.0, alpha=0.12)
         self._line("laser_beam", (emitter, beam_end), _COLORS["laser"], 2.4)
         self._fit_points.extend((emitter, beam_end))
-        if self._beam_was_clipped:
-            self._callout(
-                "laser_beam",
-                beam_end,
-                beam_end + _X * plane_half * 0.12,
-                self._text(
-                    f"빔 계속 → 실제 Z={actual_beam_end[2]:.1f} mm",
-                    f"Beam continues → actual Z={actual_beam_end[2]:.1f} mm",
-                ),
-                _COLORS["laser"],
-            )
 
         axis_end = camera_center + camera_axis * body_depth * 0.55
         self._line("optical_axis", (target, axis_end), _COLORS["axis"], 1.35, "-.", 0.9)
@@ -720,11 +676,6 @@ class ThreeDWidget(QWidget):
             )
             self._register("scheimpflug_line", marker)
             self._fit_points.extend(points)
-        # This remains a clearly named reference: principal-plane data is not in the snapshot.
-        hinge = (lens - _Y * line_half, lens + _Y * line_half)
-        self._line("hinge_line", hinge, _COLORS["hinge"], 2.4, "--")
-        self._fit_points.extend(hinge)
-
         head_centers = [emitter, lens, image, camera_center]
         if scheimpflug is not None and np.linalg.norm(scheimpflug - lens) <= plane_half * 2.5:
             head_centers.append(scheimpflug)
@@ -734,98 +685,14 @@ class ThreeDWidget(QWidget):
             (
                 values.min(axis=0) - padding,
                 values.max(axis=0) + padding,
-                *hinge,
             )
         )
 
-        title = self._text("3D Scheimpflug 장비·평면 관계", "3D Scheimpflug assembly")
-        angles = self._text(
-            f"정확식 센서 자세  γ={gamma:.3f}° · δ={delta:.3f}°",
-            f"Exact full-focus pose  γ={gamma:.3f}° · δ={delta:.3f}°",
-        )
-        self.axes.set_title(f"{title}\n{angles}", fontsize=12.0, pad=14, color=_COLORS["text"])
-        self._view_notes(snapshot)
         self._style_axes()
-        self._add_legend()
         self.fit_head(draw=False)
         self.reset_view(draw=False)
         self._set_controls_enabled(True)
         self.canvas.draw_idle()
-
-    def _view_notes(self, snapshot: SceneSnapshot) -> None:
-        style = {
-            "boxstyle": "round,pad=0.2",
-            "facecolor": "white",
-            "alpha": 0.92,
-        }
-        schematic = self.axes.text2D(
-            0.012,
-            0.09,
-            self._text(
-                "개념 형상 · 장비 외형 크기는 실제 축척이 아님",
-                "Schematic equipment shapes · body sizes are not to scale",
-            ),
-            transform=self.axes.transAxes,
-            fontsize=7.8,
-            color=_COLORS["muted"],
-            bbox={**style, "edgecolor": "#c4ced8"},
-        )
-        self._head_note = self.axes.text2D(
-            0.64,
-            0.09,
-            self._text(
-                f"레이저 진행 → 화면 밖 물체/범위 · WD={snapshot.working_distance_mm:.1f} mm",
-                f"Laser continues → off-screen range · WD={snapshot.working_distance_mm:.1f} mm",
-            ),
-            transform=self.axes.transAxes,
-            fontsize=7.8,
-            color=_COLORS["laser"],
-            bbox={**style, "edgecolor": _COLORS["laser"]},
-        )
-        self._register("view_notes", schematic, self._head_note)
-
-    def _add_legend(self) -> None:
-        handles = [
-            Patch(
-                facecolor=_COLORS[key],
-                edgecolor=_COLORS[key],
-                alpha=0.24,
-                label=self._text(korean, english),
-            )
-            for key, korean, english in (
-                ("object", "물체 평면", "Object plane"),
-                ("lens_plane", "렌즈 평면", "Lens plane"),
-                ("sensor", "센서 평면", "Sensor plane"),
-                ("laser", "레이저 평면", "Laser plane"),
-            )
-        ]
-        handles.extend(
-            Line2D(
-                (0,),
-                (0,),
-                color=_COLORS[key],
-                linewidth=width,
-                linestyle=style,
-                label=self._text(korean, english),
-            )
-            for key, width, style, korean, english in (
-                ("laser", 2.4, "-", "레이저 빔", "Laser beam"),
-                ("scheimpflug", 3.2, "-", "Scheimpflug 교선", "Scheimpflug line"),
-                ("hinge", 2.4, "--", "Hinge 기준선", "Hinge reference"),
-            )
-        )
-        legend = self.axes.legend(
-            handles=handles,
-            loc="upper left",
-            bbox_to_anchor=(0.012, 0.985),
-            fontsize=7.8,
-            framealpha=0.94,
-            edgecolor="#b7c3cf",
-            ncols=2,
-            title=self._text("표시 요소", "Scene key"),
-            title_fontsize=8.2,
-        )
-        self._register("legend", legend)
 
     def _fit_equal(self, points: Iterable[np.ndarray]) -> None:
         values = np.asarray(
@@ -850,7 +717,7 @@ class ThreeDWidget(QWidget):
         self._fit_equal(self._head_points)
         self._view_mode = "head"
         self.head_button.setChecked(True)
-        self._head_note.set_visible(True)
+        self._refresh_status()
         if draw:
             self.canvas.draw_idle()
 
@@ -862,7 +729,7 @@ class ThreeDWidget(QWidget):
         self._fit_equal(self._fit_points)
         self._view_mode = "full"
         self.fit_button.setChecked(True)
-        self._head_note.set_visible(False)
+        self._refresh_status()
         if draw:
             self.canvas.draw_idle()
 

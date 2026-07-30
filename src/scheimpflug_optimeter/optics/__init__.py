@@ -10,13 +10,11 @@ from .solvers import (
     solve_canonical_design,
     solve_workbook_design,
 )
-from .three_d import full_focus_angles
 
 __all__ = [
     "OpticalInputError",
     "build_scene_geometry",
     "calculate_sensor_imaging_metrics",
-    "full_focus_angles",
     "image_coordinate_mm",
     "image_sensitivity",
     "solve_alpha",

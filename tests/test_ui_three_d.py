@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from dataclasses import replace
 
 import pytest
@@ -46,28 +48,50 @@ def snapshot() -> SceneSnapshot:
 def rendered_widget(qtbot, value: SceneSnapshot | None = None) -> ThreeDWidget:
     widget = ThreeDWidget()
     qtbot.addWidget(widget)
-    if widget.canvas is None:
-        pytest.skip("Matplotlib Qt backend is unavailable")
     widget.resize(1000, 720)
     widget.show()
-    widget.set_geometry(
-        value or snapshot(),
-        alpha_deg=26.565051177,
-        beta_deg=18.0,
-        magnification=0.33541019662,
-    )
+    widget.set_geometry(value or snapshot())
+    if widget.canvas is None:
+        pytest.skip("Matplotlib Qt backend is unavailable")
     return widget
 
 
-def test_3d_scene_exposes_equipment_planes_normals_lines_and_legend(qtbot):
+def visible_canvas_text(widget: ThreeDWidget) -> list[str]:
+    from matplotlib.text import Text
+
+    return [
+        artist.get_text()
+        for artist in widget.axes.findobj(Text)
+        if artist.get_visible() and artist.get_text().strip()
+    ]
+
+
+def test_3d_import_does_not_eagerly_load_numerical_or_plotting_stacks():
+    script = """
+import sys
+import scheimpflug_optimeter.ui.three_d
+assert "numpy" not in sys.modules
+assert "scipy" not in sys.modules
+assert "matplotlib" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_3d_scene_uses_shapes_without_canvas_text(qtbot):
     widget = rendered_widget(qtbot)
+    widget.canvas.draw()
 
     expected_components = {
-        "object_plane",
+        "target_plane",
         "lens_plane",
-        "ideal_focus_plane",
         "sensor_plane",
-        "laser_plane",
         "camera_body",
         "sensor_body",
         "lens",
@@ -76,26 +100,36 @@ def test_3d_scene_exposes_equipment_planes_normals_lines_and_legend(qtbot):
         "optical_axis",
         "chief_rays",
         "scheimpflug_line",
-        "hinge_line",
-        "legend",
     }
     assert expected_components <= set(widget._components)
-    for name in (
-        "object_plane",
-        "lens_plane",
-        "ideal_focus_plane",
-        "sensor_plane",
+    assert {
         "laser_plane",
-    ):
-        # One edged translucent face, one normal, and a leader-backed label.
-        assert len(widget._components[name]) >= 4
-    assert widget.axes.get_legend() is not None
-    assert len(widget.axes.get_legend().get_texts()) == 7
-    assert "γ=" in widget.axes.get_title()
-    assert "δ=" in widget.axes.get_title()
-    assert widget.axes.get_xlabel().startswith("X")
-    assert widget.axes.get_ylabel().startswith("Y")
-    assert widget.axes.get_zlabel().startswith("Z")
+        "ideal_focus_plane",
+        "hinge_line",
+        "object_plane",
+    }.isdisjoint(widget._components)
+    for name in ("target_plane", "lens_plane", "sensor_plane"):
+        # Each plane remains identifiable by an edged translucent face and normal.
+        assert len(widget._components[name]) >= 2
+    assert widget.axes.get_legend() is None
+    assert visible_canvas_text(widget) == []
+    assert widget.axes.get_xlabel() == ""
+    assert widget.axes.get_ylabel() == ""
+    assert widget.axes.get_zlabel() == ""
+    assert all(not label.get_text() for label in widget.axes.get_xticklabels())
+    assert all(not label.get_text() for label in widget.axes.get_yticklabels())
+    assert all(not label.get_text() for label in widget.axes.get_zticklabels())
+    assert "WD=" in widget.status_card.text()
+    assert "γ=" not in widget.status_card.text()
+    assert "δ=" not in widget.status_card.text()
+    assert "레이저 평면" not in widget.scene_key.text()
+    assert "Laser plane" not in widget.scene_key.text()
+    assert "레이저 중심 광선" in widget.scene_key.text()
+    assert widget.scene_key.accessibleDescription()
+    assert (
+        widget._components["laser_beam"][0].get_color()
+        != widget._components["scheimpflug_line"][0].get_color()
+    )
 
     spans = (
         widget.axes.get_xlim3d()[1] - widget.axes.get_xlim3d()[0],
@@ -108,7 +142,7 @@ def test_3d_scene_exposes_equipment_planes_normals_lines_and_legend(qtbot):
     assert widget.axes.azim == pytest.approx(-56.0)
     assert widget._view_mode == "head"
     assert widget.head_button.isChecked()
-    assert widget._head_note.get_visible()
+    assert any(term in widget.status_card.text() for term in ("광학 헤드", "Optical head"))
 
 
 def test_3d_fit_and_default_view_controls_restore_readable_state(qtbot):
@@ -130,26 +164,32 @@ def test_3d_fit_and_default_view_controls_restore_readable_state(qtbot):
     assert spans[0] > head_span
     assert widget._view_mode == "full"
     assert widget.fit_button.isChecked()
-    assert not widget._head_note.get_visible()
+    assert any(term in widget.status_card.text() for term in ("전체 구조", "Full assembly"))
 
     qtbot.mouseClick(widget.head_button, Qt.MouseButton.LeftButton)
     restored_head_span = widget.axes.get_xlim3d()[1] - widget.axes.get_xlim3d()[0]
     assert restored_head_span == pytest.approx(head_span, rel=1e-12)
     assert widget._view_mode == "head"
-    assert widget._head_note.get_visible()
+    assert any(term in widget.status_card.text() for term in ("광학 헤드", "Optical head"))
 
     widget.axes.view_init(elev=2.0, azim=3.0)
     qtbot.mouseClick(widget.view_button, Qt.MouseButton.LeftButton)
     assert widget.axes.elev == pytest.approx(24.0)
     assert widget.axes.azim == pytest.approx(-56.0)
 
-    widget.set_geometry(None, alpha_deg=0.0, beta_deg=0.0)
+    widget.set_geometry(None)
     assert not widget.head_button.isEnabled()
     assert not widget.fit_button.isEnabled()
     assert not widget.view_button.isEnabled()
+    widget.canvas.draw()
+    assert visible_canvas_text(widget) == []
+    assert any(
+        term in widget.status_card.text()
+        for term in ("설계 입력을 기다리는 중", "Waiting for a valid design")
+    )
 
 
-def test_remote_workbook_beam_is_annotated_without_destroying_fit(qtbot):
+def test_remote_workbook_beam_clipping_moves_detail_to_status_card(qtbot):
     value = replace(
         snapshot(),
         laser_endpoints=(Point2D(0.0, 0.0), Point2D(0.0, -5000.0)),
@@ -160,6 +200,9 @@ def test_remote_workbook_beam_is_annotated_without_destroying_fit(qtbot):
 
     assert widget._snapshot is value
     assert widget._beam_was_clipped
-    assert len(widget._components["laser_beam"]) == 3
+    assert len(widget._components["laser_beam"]) == 1
+    assert "Z=-5000.0 mm" in widget.status_card.text()
+    widget.canvas.draw()
+    assert visible_canvas_text(widget) == []
     z_span = widget.axes.get_zlim3d()[1] - widget.axes.get_zlim3d()[0]
     assert z_span < 1000.0

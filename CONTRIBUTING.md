@@ -24,10 +24,11 @@ Changes to a formula require:
 
 Ordinary `main` and tag pushes never publish a release. Version releases are
 manual-only and reserved for large, coherent updates; routine fixes and small
-features do not change the application version. A maintenance prerelease may
-also be triggered by creating a new `release/build-YYYYMMDD.N` branch that
-points to the exact latest remote `main` SHA. Published tags, releases, and
-assets are never overwritten through the workflow. Complete the appropriate
-checklist and partial-failure runbook in
+features do not change the application version and must be published as a new
+maintenance prerelease after they are completed. Initiate that release either
+with the authorized manual workflow or by creating a new
+`release/build-YYYYMMDD.N` branch that points to the exact latest remote
+`main` SHA. Published tags, releases, and assets are never overwritten through
+the workflow. Complete the appropriate checklist and partial-failure runbook in
 [`docs/release-policy.md`](docs/release-policy.md) before starting the
 `Release` workflow.

@@ -34,7 +34,7 @@ def test_desktop_layout_is_readable_responsive_and_explicitly_static(qtbot):
     window.show()
     qtbot.waitUntil(lambda: window.design.solution is not None, timeout=5_000)
 
-    assert application.font().pointSize() >= 11
+    assert 9.5 <= application.font().pointSizeF() <= 15.0
     assert window.minimumWidth() == 1100
     assert window.minimumHeight() == 700
     assert window.tabs.documentMode()
@@ -130,7 +130,7 @@ def test_input_changes_are_debounced_and_invalid_result_is_not_stale(qtbot):
     window.design.input_panel.beta_deg.setValue(89.0)
     assert window.design.solution is previous
 
-    qtbot.wait(40)
+    qtbot.waitUntil(lambda: window.design.solution is not previous, timeout=1_000)
 
     assert window.design.solution is not previous
     assert not window.design.solution.valid
