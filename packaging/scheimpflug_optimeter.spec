@@ -28,9 +28,9 @@ a = Analysis(
     noarchive=False,
 )
 
-# The public portable bundle must never carry the locally supplied papers or
-# workbook.  Matplotlib also ships unused PDF toolbar artwork, so removing all
-# document-like data files gives the release artifact a simple, auditable rule.
+# The public executable must never carry the locally supplied papers or workbook.
+# Matplotlib also ships unused PDF toolbar artwork, so removing all document-like
+# data files gives the release artifact a simple, auditable rule.
 private_source_suffixes = {".pdf", ".xls", ".xlsx"}
 a.datas = [
     entry for entry in a.datas if Path(entry[0]).suffix.lower() not in private_source_suffixes
@@ -40,8 +40,9 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name="Scheimpflug-OptiMeter",
     debug=False,
     bootloader_ignore_signals=False,
@@ -49,13 +50,4 @@ exe = EXE(
     upx=False,
     console=False,
     icon=str(application_icon),
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name="Scheimpflug-OptiMeter",
 )

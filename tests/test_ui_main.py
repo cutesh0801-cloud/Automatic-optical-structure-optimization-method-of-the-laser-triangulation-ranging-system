@@ -4,6 +4,7 @@ import csv
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QToolBar
 
 from scheimpflug_optimeter.app import create_application
@@ -64,6 +65,7 @@ def test_desktop_layout_is_readable_responsive_and_explicitly_static(qtbot):
     assert results.values.accessibleName() == "Scheimpflug 계산 수치 표"
     assert results.values.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     assert results.messages.accessibleName() == "설계 경고와 제약 조건"
+    assert results.messages.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     assert window.sensor_comparison.table.rowCount() == 4
     assert window.sensor_comparison.table.selectionModel().selectedRows()[0].row() == 0
     assert "4종" in window.sensor_comparison.selection_summary.text()
@@ -74,6 +76,28 @@ def test_desktop_layout_is_readable_responsive_and_explicitly_static(qtbot):
     toolbar_labels = {action.text() for action in toolbar.actions()}
     assert "워크북 입력 CSV 불러오기…" not in toolbar_labels
     assert {"새 프로젝트", "프로젝트 열기…", "저장", "전체 맞춤", "광학부 확대"} <= toolbar_labels
+
+
+def test_result_values_fit_without_nested_scrolling_at_1280_by_720(qtbot):
+    create_application([])
+    window = MainWindow()
+    window.maybe_save_changes = lambda: True
+    qtbot.addWidget(window)
+    window.resize(1280, 720)
+    window.show()
+    qtbot.waitUntil(lambda: window.design.solution is not None, timeout=5_000)
+
+    table = window.design.result_panel.values
+    assert not window.design.result_scroll.verticalScrollBar().isVisible()
+    assert not table.header().stretchLastSection()
+    metrics = QFontMetrics(table.font())
+    for column in range(2):
+        widest_text = max(
+            metrics.horizontalAdvance(table.topLevelItem(row).text(column))
+            for row in range(table.topLevelItemCount())
+        )
+        assert widest_text <= table.columnWidth(column) - 4
+    assert sum(table.columnWidth(column) for column in range(2)) <= table.viewport().width()
 
 
 def test_main_window_live_design_and_project_recalculation(qtbot):
@@ -117,6 +141,73 @@ def test_main_window_live_design_and_project_recalculation(qtbot):
     assert window.design.snapshot.working_distance_mm == 210.0
     assert window.windowTitle().endswith("로드 후 재계산")
     assert window.three_d._snapshot is window.design.snapshot
+
+
+def test_signed_workbook_intercept_is_presented_as_distance_and_direction(qtbot):
+    window = MainWindow()
+    window.maybe_save_changes = lambda: True
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window.design.solution is not None, timeout=5_000)
+
+    window.design.input_panel.sensor_length_mm.setValue(7.0)
+    qtbot.waitUntil(
+        lambda: (
+            window.design.solution is not None
+            and window.design.solution.ray_intercept_s_mm is not None
+            and window.design.solution.ray_intercept_s_mm < 0.0
+        ),
+        timeout=1_000,
+    )
+
+    solution = window.design.solution
+    distance = abs(solution.ray_intercept_s_mm)
+    rows = {
+        window.design.result_panel.values.topLevelItem(index).text(
+            0
+        ): window.design.result_panel.values.topLevelItem(index).text(1)
+        for index in range(window.design.result_panel.values.topLevelItemCount())
+    }
+    assert window.design.snapshot.measurement_range_mm == pytest.approx(distance)
+    assert float(rows["광선 교차 거리 |s|"].split()[0]) == pytest.approx(
+        distance,
+        rel=1e-6,
+    )
+    assert f"|s|={distance:.3f} mm" in window.status_label.text()
+    assert "|s|=-" not in window.status_label.text()
+    assert "위 계속 ↑" in window.design.scene.labels["range"].text()
+
+
+def test_constraint_messages_wrap_without_horizontal_scrolling(qtbot):
+    create_application([])
+    window = MainWindow()
+    window.maybe_save_changes = lambda: True
+    qtbot.addWidget(window)
+    window.resize(1280, 720)
+    window.show()
+    qtbot.waitUntil(lambda: window.design.solution is not None, timeout=5_000)
+
+    mode = window.design.input_panel.mode
+    mode.setCurrentIndex(mode.findData("canonical"))
+    qtbot.waitUntil(
+        lambda: (
+            window.design.solution is not None
+            and window.design.solution.mode.value == "canonical"
+            and window.design.result_panel.messages.count() > 0
+        ),
+        timeout=1_000,
+    )
+    messages = window.design.result_panel.messages
+    item = messages.item(0)
+    qtbot.waitUntil(
+        lambda: item.sizeHint().height() > QFontMetrics(messages.font()).height() + 8,
+        timeout=1_000,
+    )
+
+    assert messages.horizontalScrollBar().maximum() == 0
+    assert item.sizeHint().width() <= messages.viewport().width()
+    assert item.sizeHint().height() <= messages.viewport().height()
+    assert "\n" in item.text()
 
 
 def test_input_changes_are_debounced_and_invalid_result_is_not_stale(qtbot):
@@ -186,8 +277,8 @@ def test_workbook_is_default_and_direct_l_reproduces_both_regression_cases(qtbot
     assert window.tabs.tabText(1) == "3D Scheimpflug 시각화"
     assert window.tabs.tabText(2) == "Basler 센서 비교"
     assert window.design.scene.sceneRect().height() < 500.0
-    assert "레이저 교차 거리 s" in window.design.scene.labels["range"].text()
-    assert "화면 밖" in window.design.scene.labels["range"].text()
+    assert "광선 교차 거리 |s|" in window.design.scene.labels["range"].text()
+    assert "아래" in window.design.scene.labels["range"].text()
     assert not window.design.scene.target_near_line.isVisible()
     assert not window.design.scene.target_far_line.isVisible()
 
@@ -197,18 +288,18 @@ def test_workbook_is_default_and_direct_l_reproduces_both_regression_cases(qtbot
     }
     assert {
         "베이스라인 b",
-        "반 센서 길이 x=L/2",
-        "외곽 W",
-        "후방 R",
+        "반 센서 x=L/2",
+        "워크북식 W=b+L/2",
+        "워크북식 R=V−d",
         "이미지 거리 fp",
         "물체 거리 lo",
-        "레이저 교차 거리 s",
+        "광선 교차 거리 |s|",
         "유도 초점거리 f",
         "총 광로 lo+fp",
-        "센서 기준 가로 FOV",
-        "센서 기준 세로 FOV",
+        "센서 가로 FOV",
+        "센서 세로 FOV",
         "중앙 거리 민감도",
-        "전체 센서 최악 거리 민감도",
+        "최악 거리 민감도",
     } <= rows
 
     window.design.apply_project_input(

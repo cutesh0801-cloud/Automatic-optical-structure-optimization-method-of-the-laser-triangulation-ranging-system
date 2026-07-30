@@ -11,6 +11,8 @@ dist/
 build/
 /Scheimpflug-OptiMeter-windows-x64.zip
 /Scheimpflug-OptiMeter-windows-x64.zip.sha256
+/Scheimpflug-OptiMeter-windows-x64.exe
+/Scheimpflug-OptiMeter-windows-x64.exe.sha256
 
 # IDE / OS
 .idea/

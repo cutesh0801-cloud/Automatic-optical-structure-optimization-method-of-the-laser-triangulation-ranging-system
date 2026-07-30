@@ -144,11 +144,12 @@ QLabel#panelTitle {
     padding: 2px 0 5px 0;
 }
 QLabel#modeHelp {
-    background: #e9f3fd;
-    border: 1px solid #9fc5e8;
-    border-radius: 6px;
-    color: #163f63;
-    padding: 9px;
+    background: #f7f9fb;
+    border: 0;
+    border-left: 3px solid #8aa0b5;
+    border-radius: 3px;
+    color: #415466;
+    padding: 7px 9px;
 }
 QLabel#solutionSummary {
     background: #edf3f8;
@@ -183,22 +184,21 @@ QLabel#workspaceTitle {
     color: #173b5e;
     font-weight: 700;
 }
+QLabel#sceneKey {
+    color: #526577;
+    padding: 1px 4px;
+}
 QLabel#performanceBadge {
-    background: #edf2f6;
-    border: 1px solid #c6d0da;
-    border-radius: 9px;
+    background: transparent;
+    border: 0;
     color: #415466;
-    padding: 3px 8px;
+    padding: 2px 4px;
 }
 QLabel#performanceBadge[state="valid"] {
-    background: #e8f5ee;
-    border-color: #8bc6a7;
     color: #0d5834;
 }
 QLabel#performanceBadge[state="warning"],
 QLabel#performanceBadge[state="error"] {
-    background: #fdebea;
-    border-color: #e5aaa5;
     color: #7a1b15;
 }
 QLabel#sensorComparisonDescription {
