@@ -8,7 +8,7 @@ Product-version releases are intentionally reserved for reviewed, large
 updates. Routine work remains unreleased unless a maintainer explicitly
 authorizes an append-only maintenance build.
 
-## 0.1.0 maintenance build 2026-07-30 (`build-20260730.1`)
+## 0.1.0 maintenance build 2026-07-30 (`build-20260730.2`)
 
 - Increased the desktop type scale and clarified the input, workspace, result,
   warning and application-status hierarchy.
