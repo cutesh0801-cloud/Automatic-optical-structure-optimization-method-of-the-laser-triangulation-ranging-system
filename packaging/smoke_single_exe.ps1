@@ -4,6 +4,9 @@ param(
     [string]$Executable = "dist\Scheimpflug-OptiMeter.exe",
 
     [Parameter(Mandatory = $false)]
+    [string]$ExecutableArguments = "",
+
+    [Parameter(Mandatory = $false)]
     [ValidateRange(1, 30)]
     [int]$ObservationSeconds = 5
 )
@@ -11,7 +14,6 @@ param(
 $ErrorActionPreference = "Stop"
 $resolvedExecutable = (Resolve-Path -LiteralPath $Executable).Path
 $workingDirectory = Split-Path -Parent $resolvedExecutable
-$pathComparison = [StringComparison]::OrdinalIgnoreCase
 $applicationProcess = $null
 $trackedProcessIds = [Collections.Generic.HashSet[int]]::new()
 
@@ -22,30 +24,16 @@ function Get-ProcessSnapshot {
     )
 }
 
-function Test-SameExecutable {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$Process
-    )
-
-    $candidatePath = [string]$Process.ExecutablePath
-    if ([string]::IsNullOrWhiteSpace($candidatePath)) {
-        return $false
-    }
-    try {
-        $candidatePath = [IO.Path]::GetFullPath($candidatePath)
-    }
-    catch {
-        return $false
-    }
-    return [string]::Equals($candidatePath, $resolvedExecutable, $pathComparison)
-}
-
 function Update-TrackedProcessIds {
     param(
         [Parameter(Mandatory = $true)]
         [object[]]$Snapshot
     )
+
+    $snapshotProcessIds = [Collections.Generic.HashSet[int]]::new()
+    foreach ($processEntry in $Snapshot) {
+        $null = $snapshotProcessIds.Add([int]$processEntry.ProcessId)
+    }
 
     $changed = $true
     while ($changed) {
@@ -57,12 +45,11 @@ function Update-TrackedProcessIds {
             }
 
             $parentPidValue = [int]$processEntry.ParentProcessId
-            $isTrackedDescendant = $trackedProcessIds.Contains($parentPidValue)
-            $isNewSameExecutable = (
-                -not $baselineExecutableProcessIds.Contains($pidValue) -and
-                (Test-SameExecutable -Process $processEntry)
+            $isTrackedDescendant = (
+                $trackedProcessIds.Contains($parentPidValue) -and
+                $snapshotProcessIds.Contains($parentPidValue)
             )
-            if ($isTrackedDescendant -or $isNewSameExecutable) {
+            if ($isTrackedDescendant) {
                 $null = $trackedProcessIds.Add($pidValue)
                 $changed = $true
             }
@@ -132,32 +119,30 @@ function Stop-TrackedProcessTree {
     )
     foreach ($target in $stopOrder) {
         $pidValue = [int]$target.Process.ProcessId
-        if ($baselineExecutableProcessIds.Contains($pidValue)) {
-            continue
-        }
         Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
     }
 }
 
-$baselineSnapshot = @(Get-ProcessSnapshot)
-$baselineExecutableProcessIds = [Collections.Generic.HashSet[int]]::new()
-foreach ($processEntry in $baselineSnapshot) {
-    if (Test-SameExecutable -Process $processEntry) {
-        $null = $baselineExecutableProcessIds.Add([int]$processEntry.ProcessId)
-    }
-}
-
 try {
-    $applicationProcess = Start-Process `
-        -FilePath $resolvedExecutable `
-        -WorkingDirectory $workingDirectory `
-        -WindowStyle Hidden `
-        -PassThru
+    $startParameters = @{
+        FilePath = $resolvedExecutable
+        WorkingDirectory = $workingDirectory
+        WindowStyle = "Hidden"
+        PassThru = $true
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExecutableArguments)) {
+        $startParameters.ArgumentList = $ExecutableArguments
+    }
+    $applicationProcess = Start-Process @startParameters
     $applicationPid = $applicationProcess.Id
     $null = $trackedProcessIds.Add($applicationPid)
 
-    Start-Sleep -Seconds $ObservationSeconds
-    Update-TrackedProcessIds -Snapshot @(Get-ProcessSnapshot)
+    $observationDeadline = [DateTime]::UtcNow.AddSeconds($ObservationSeconds)
+    do {
+        Update-TrackedProcessIds -Snapshot @(Get-ProcessSnapshot)
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $observationDeadline)
+
     $applicationProcess.Refresh()
     if ($applicationProcess.HasExited) {
         throw "Application exited during startup (PID=$applicationPid, exit=$($applicationProcess.ExitCode))."

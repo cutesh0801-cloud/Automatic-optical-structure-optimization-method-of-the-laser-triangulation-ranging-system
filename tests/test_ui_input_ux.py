@@ -90,6 +90,41 @@ def test_formula_card_tracks_workbook_and_canonical_modes(qtbot):
     assert not panel.beta_deg.isHidden()
 
 
+def test_mode_visibility_toggles_lens_label_and_selector_together(qtbot):
+    panel = DesignInputPanel(OpticalCoreFacade())
+    qtbot.addWidget(panel)
+    panel.show()
+
+    lens_label = panel.input_labels["lens"]
+    always_visible_combos = (
+        (panel.input_labels["camera"], panel.camera),
+        (panel.input_labels["sensor_axis"], panel.sensor_axis),
+    )
+
+    assert lens_label.isHidden()
+    assert panel.lens.isHidden()
+    assert all(
+        not widget.isHidden()
+        for label, selector in always_visible_combos
+        for widget in (label, selector)
+    )
+
+    panel.mode.setCurrentIndex(panel.mode.findData("canonical"))
+
+    assert not lens_label.isHidden()
+    assert not panel.lens.isHidden()
+    assert all(
+        not widget.isHidden()
+        for label, selector in always_visible_combos
+        for widget in (label, selector)
+    )
+
+    panel.mode.setCurrentIndex(panel.mode.findData("workbook"))
+
+    assert lens_label.isHidden()
+    assert panel.lens.isHidden()
+
+
 def test_input_help_remains_readable_in_narrow_scroll_panel(qtbot):
     panel = DesignInputPanel(OpticalCoreFacade())
     qtbot.addWidget(panel)

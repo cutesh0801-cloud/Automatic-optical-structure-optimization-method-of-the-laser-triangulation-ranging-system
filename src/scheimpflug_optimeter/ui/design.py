@@ -733,6 +733,10 @@ class DesignInputPanel(QWidget):
         self.parameter_group.setTitle(
             "워크북 직접 입력" if workbook else "Canonical 비교 입력 및 제약"
         )
+        # Combo boxes occupy a separate full-width row below their labels.
+        # Toggle the lens label explicitly so workbook mode never leaves an
+        # orphaned label behind when the lens selector itself is hidden.
+        self.form.setRowVisible(self.input_labels["lens"], not workbook)
         for widget in (self.v_mm, self.sensor_length_container):
             self.form.setRowVisible(widget, workbook)
         for widget in (
